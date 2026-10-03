@@ -1,0 +1,771 @@
+Fair point — I gave you only the PWA layer (Phase 1.5) assuming Phase 0 was already shipped. You want the full sequence: Phase 0 (MVP) → Phase 1 (UK verified) → Phase 1.5 (PWA), all in one master prompt a fresh agent can run from zero.
+
+Writing it now. Saving to file and pasting the full content in chat across two messages (so you can copy both).
+Saved to `/home/z/my-project/download/VisaCheck_Master_Build_Prompt_0_to_1.5.md` (996 lines / 61KB). Pasting the full content here so you can copy directly — split across two messages because it's long. **This is Part 1 of 2** (covers everything through end of Phase 0):
+
+---
+
+```
+# MASTER BUILD PROMPT — VisaCheck Phases 0 → 1 → 1.5
+
+You are building VisaCheck, a free, privacy-first, store-nothing UK visa rule checker, from scratch through three sequential phases. Build them in order; do not skip ahead.
+
+- Phase 0: the hardened store-nothing MVP (5 files + rules.json + headers)
+- Phase 1: UK verified — your four gov.uk clicks convert PENDING_HUMAN_CLICK markers to live rules
+- Phase 1.5: installable PWA — manifest, service worker, offline shell, install prompt
+
+Three honesty notes that shape every decision:
+
+1. The verification gate is load-bearing — every rule ships with PENDING_HUMAN_CLICK markers. Until a human clicks through gov.uk, every check shows the safe "being verified" state. That is the gate working, not a bug.
+2. Competitor reviews in the codebase are unverified (training data only). The research relay will replace them.
+3. We are not lawyers. The compliance framing is engineering practice, not legal advice.
+
+---
+
+## HARD CONSTRAINTS (do not violate any, in any phase)
+
+- Store-nothing is a design property, not a config. Nothing in the request path may touch storage. The service worker MAY cache static assets but MAY NOT cache any user input, any evaluation result, or anything that touched the request body.
+- Strict CSP holds. script-src 'self' https://challenges.cloudflare.com with no inline JS. The service worker and install flow must not require inline scripts, 'unsafe-inline', or any new external origin.
+- Whitelist-only vars. The server copies only variables the rules actually use.
+- PECR-minimal storage. localStorage holds only: vcLang (language), vcTheme (dark mode), vcUsedOnce (set after first "Start the check" click, gates the install banner).
+- The gate stays load-bearing. The whole-rule JSON.stringify(r).includes("PENDING_HUMAN_CLICK") filter in functions/api/check.js must not be weakened.
+- Cloudflare Pages deployment. Static files at project root. Function at functions/api/check.js. Service worker at /sw.js with scope "/".
+- Accessibility baseline. Skip link, focus rings, aria-live regions, reduced-motion, WCAG-AA contrast. Install banner must be keyboard-dismissable and announced via aria-live.
+- Deploy on Cloudflare Pages + Functions. Bind a KV namespace named RATE for rate limiting. Set env var TURNSTILE_SECRET for bot protection.
+
+---
+
+# PHASE 0 — BUILD THE MVP
+
+## File tree
+
+/
+├── index.html
+├── app.css
+├── app.js
+├── data/rules.json
+├── functions/api/check.js
+└── _headers
+
+## index.html
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VisaCheck — Do you meet the published UK visa rules?</title>
+<meta name="description" content="Free, private check against published UK Skilled Worker visa rules. Not immigration advice. Your answers are never stored.">
+<link rel="canonical" href="https://REPLACE-ON-DOMAIN-DAY.pages.dev/">
+<meta property="og:title" content="VisaCheck — plain-English UK visa rule check">
+<meta property="og:description" content="Check the published rules yourself. No sign-up. Nothing stored. Free.">
+<meta name="theme-color" content="#0d9488">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230d9488'/%3E%3Cpath d='M32 12l16 6v12c0 12-7 18-16 22-9-4-16-10-16-22V18z' fill='none' stroke='%23fff' stroke-width='4'/%3E%3Cpath d='M25 32l5 5 10-11' fill='none' stroke='%23fff' stroke-width='4'/%3E%3C/svg%3E">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebApplication","name":"VisaCheck",
+"applicationCategory":"GovernmentApplication","operatingSystem":"Web",
+"offers":{"@type":"Offer","price":"0"},
+"description":"Free private checker comparing your answers against published UK Skilled Worker visa rules. Not immigration advice."}
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=Sora:wght@600;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<a class="skip" href="#main" data-i18n="skip">Skip to content</a>
+
+<header>
+  <div class="wrap hrow">
+    <div class="brand">
+      <svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="var(--accent)"/><path d="M32 12l16 6v12c0 12-7 18-16 22-9-4-16-10-16-22V18z" fill="none" stroke="#fff" stroke-width="4"/><path d="M25 32l5 5 10-11" fill="none" stroke="#fff" stroke-width="4"/></svg>
+      <div><strong>VisaCheck</strong><small data-i18n="tag">Published rules · plain English</small></div>
+    </div>
+    <div class="htools">
+      <select id="langSel" aria-label="Language">
+        <option value="en">English</option><option value="ur">اردو</option><option value="bn">বাংলা</option>
+      </select>
+      <button id="themeBtn" class="ibtn" aria-label="Dark mode">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+
+<main id="main" class="wrap">
+  <section id="pg-home">
+    <div class="hero glass">
+      <h1 data-i18n="h1">Check the UK visa rules yourself — in plain words</h1>
+      <p data-i18n="sub">Answer a few short questions. We compare your answers with the rules published on GOV.UK and show you each one. Free. No sign-up. We never store your answers.</p>
+      <div class="how">
+        <div><span class="n">1</span><p data-i18n="how1">Answer 6 short questions</p></div>
+        <div><span class="n">2</span><p data-i18n="how2">See every rule: passed, failed, or missing answer</p></div>
+        <div><span class="n">3</span><p data-i18n="how3">Check each rule yourself on GOV.UK</p></div>
+      </div>
+      <button id="startBtn" class="btn-primary" data-i18n="start">Start the check</button>
+    </div>
+    <div class="notice" data-i18n="notice">⚠️ This is general information, not immigration advice. We are not regulated immigration advisers. Always confirm on GOV.UK or with a regulated adviser.</div>
+    <div class="glass card">
+      <h2 data-i18n="covered">Covered right now</h2>
+      <div class="visa-row">
+        <div class="visa on"><strong>🇬🇧 United Kingdom</strong><span>Skilled Worker visa</span><button class="btn-primary small startBtn2" data-i18n="start">Start the check</button></div>
+        <div class="visa off"><strong>🇨🇦 Canada</strong><span data-i18n="soon">Coming soon</span></div>
+        <div class="visa off"><strong>🇦🇺 Australia</strong><span data-i18n="soon">Coming soon</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="pg-form" hidden>
+    <div class="glass card">
+      <div class="dots" id="dots"><span class="on"></span><span></span><span></span><span></span></div>
+      <form id="form" novalidate>
+        <input type="text" name="website" class="hp" tabindex="-1" autocomplete="off" aria-hidden="true">
+        <fieldset class="step on" data-step="0">
+          <legend data-i18n="s1">Step 1 · Sponsorship</legend>
+          <label data-i18n="f_cos" for="has_valid_cos">Do you have a valid Certificate of Sponsorship (CoS) from a licensed sponsor?</label>
+          <select id="has_valid_cos" name="has_valid_cos"><option value="">—</option><option value="true" data-i18n="yes">Yes</option><option value="false" data-i18n="no">No</option></select>
+        </fieldset>
+        <fieldset class="step" data-step="1">
+          <legend data-i18n="s2">Step 2 · Job & salary</legend>
+          <label data-i18n="f_income" for="annual_income_gbp">Yearly salary before tax (£)</label>
+          <input id="annual_income_gbp" name="annual_income_gbp" type="number" min="0" inputmode="numeric" placeholder="e.g. 45000">
+          <label data-i18n="f_rate" for="occupation_going_rate_gbp">Going rate for your job code (£)</label>
+          <input id="occupation_going_rate_gbp" name="occupation_going_rate_gbp" type="number" min="0" inputmode="numeric" placeholder="From the official table">
+          <p class="help"><span data-i18n="f_rate_help">Find your job code and its going rate in the official table:</span>
+          <a href="https://www.gov.uk/government/publications/skilled-worker-visa-going-rates-for-eligible-occupation-codes" target="_blank" rel="noopener" data-i18n="open_table">Open the official table ↗</a></p>
+        </fieldset>
+        <fieldset class="step" data-step="2">
+          <legend data-i18n="s3">Step 3 · English & money</legend>
+          <label data-i18n="f_eng" for="english_level_cefr">Your English level (CEFR)</label>
+          <select id="english_level_cefr" name="english_level_cefr"><option value="">—</option><option>A1</option><option>A2</option><option>B1</option><option>B2</option><option>C1</option><option>C2</option></select>
+          <label data-i18n="f_bank" for="bank_balance_gbp">Money in savings (£)</label>
+          <input id="bank_balance_gbp" name="bank_balance_gbp" type="number" min="0" inputmode="numeric" placeholder="e.g. 2000">
+          <label data-i18n="f_cert" for="maintenance_certified_by_sponsor">Has your sponsor certified your maintenance on the CoS?</label>
+          <select id="maintenance_certified_by_sponsor" name="maintenance_certified_by_sponsor"><option value="">—</option><option value="true" data-i18n="yes">Yes</option><option value="false" data-i18n="no">No</option></select>
+        </fieldset>
+        <fieldset class="step" data-step="3">
+          <legend data-i18n="s4">Step 4 · Quick check</legend>
+          <p data-i18n="s4txt">Ready. Nothing you typed is saved anywhere. The check runs once and the answer comes back to this page only.</p>
+          <div class="cf-turnstile" data-sitekey="PASTE_SITEKEY"></div>
+        </fieldset>
+        <div class="navrow">
+          <button type="button" id="backBtn" class="btn-ghost" data-i18n="back" disabled>Back</button>
+          <button type="button" id="nextBtn" class="btn-primary" data-i18n="next">Next</button>
+          <button type="submit" id="checkBtn" class="btn-primary" data-i18n="check" hidden>Check now</button>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <section id="pg-results" hidden>
+    <div id="banner" class="banner" role="status" aria-live="polite"></div>
+    <div id="cards"></div>
+    <div class="notice" data-i18n="notice"></div>
+    <div class="navrow center">
+      <button id="printBtn" class="btn-ghost" data-i18n="print">Print / Save PDF</button>
+      <button id="againBtn" class="btn-primary" data-i18n="restart">Start again</button>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p data-i18n="foot1">VisaCheck compares your answers with rules published on GOV.UK. It is not affiliated with any government. It does not give immigration advice and stores nothing about you.</p>
+    <p>
+      <button id="privBtn" class="linkish" data-i18n="privacy">Privacy</button> ·
+      <button id="termsBtn" class="linkish" data-i18n="terms">Terms</button> ·
+      <span data-i18n="foot2">Only your language and dark-mode choice are saved on your device.</span>
+    </p>
+  </div>
+</footer>
+
+<div class="modal" id="mPriv" hidden><div class="mcard glass">
+  <h3 data-i18n="privacy">Privacy</h3>
+  <ul>
+    <li data-i18n="pv1">We do not have accounts, and we do not keep your answers. The check runs and is forgotten.</li>
+    <li data-i18n="pv2">Your answers are sent once to our server, used to compare against published rules, and never saved.</li>
+    <li data-i18n="pv3">On your device we save only two things: your language and dark-mode choice.</li>
+    <li data-i18n="pv4">No ads, no tracking, no selling data. Ever.</li>
+    <li data-i18n="pv5">Security: encrypted connection, bot protection, and strict browser security headers.</li>
+  </ul>
+  <button class="btn-primary mclose" data-i18n="close">Close</button>
+</div></div>
+
+<div class="modal" id="mTerms" hidden><div class="mcard glass">
+  <h3 data-i18n="terms">Terms</h3>
+  <ul>
+    <li data-i18n="t1">This tool shows a comparison between what you typed and rules published by the government.</li>
+    <li data-i18n="t2">It is general information only. It is not immigration advice, and we are not regulated immigration advisers.</li>
+    <li data-i18n="t3">Rules change. A result today can be wrong tomorrow. Always check GOV.UK before you apply.</li>
+    <li data-i18n="t4">We try hard to keep data correct and clearly marked when unverified — but we cannot promise every figure is current. The source link is always shown.</li>
+  </ul>
+  <button class="btn-primary mclose" data-i18n="close">Close</button>
+</div></div>
+
+<div id="toast" role="status"></div>
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+<script src="app.js"></script>
+</body>
+</html>
+```
+
+## app.css (Phase 0 core styles)
+
+```css
+:root{--bg:#f2f6f5;--ink:#10221d;--mut:#5d6f68;--glass:rgba(255,255,255,.72);--line:rgba(13,148,136,.25);
+--accent:#0d9488;--accent2:#0f766e;--gold:#d4a017;--ok:#15803d;--bad:#b91c1c;--warn:#a16207;--info:#1d4ed8;
+--r:20px;--sh:0 12px 34px rgba(13,60,50,.10)}
+html.dark{--bg:#0c1512;--ink:#e7f2ee;--mut:#8ba79d;--glass:rgba(18,32,27,.72);--line:rgba(13,148,136,.35);
+--sh:0 12px 34px rgba(0,0,0,.45)}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;font-family:Inter,system-ui,"Segoe UI",sans-serif;background:
+radial-gradient(900px 420px at 85% -10%,rgba(13,148,136,.14),transparent),radial-gradient(700px 380px at -10% 30%,rgba(212,160,23,.10),transparent),var(--bg);
+color:var(--ink);min-height:100vh;display:flex;flex-direction:column;line-height:1.55}
+html[dir=rtl] body{font-family:Tahoma,Inter,sans-serif}
+.wrap{width:100%;max-width:860px;margin:0 auto;padding:0 16px}
+.skip{position:absolute;left:-999px}.skip:focus{left:8px;top:8px;background:var(--accent);color:#fff;padding:8px 14px;border-radius:8px;z-index:99}
+header{position:sticky;top:0;z-index:40;background:var(--glass);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+.hrow{display:flex;align-items:center;justify-content:space-between;padding:10px 0}
+.brand{display:flex;gap:10px;align-items:center}.brand svg{width:34px;height:34px}
+.brand strong{font-family:Sora,Inter,sans-serif;font-size:17px}.brand small{display:block;font-size:11px;color:var(--mut)}
+.htools{display:flex;gap:8px;align-items:center}
+select,.ibtn{background:var(--glass);border:1px solid var(--line);border-radius:12px;padding:8px 10px;font:inherit;color:var(--ink)}
+.ibtn{width:38px;height:38px;display:grid;place-items:center;cursor:pointer}.ibtn svg{width:18px;height:18px}
+main{flex:1;padding:18px 0 40px}
+.glass{background:var(--glass);backdrop-filter:blur(16px);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--sh)}
+.hero{padding:34px 28px;text-align:center}
+h1{font-family:Sora,Inter,sans-serif;font-size:clamp(22px,4.5vw,32px);margin:0 0 10px}
+.hero p{color:var(--mut);max-width:560px;margin:0 auto 18px}
+.how{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-bottom:20px}
+.how div{display:flex;gap:8px;align-items:center;background:rgba(13,148,136,.08);border:1px solid var(--line);border-radius:14px;padding:8px 14px}
+.how .n{width:22px;height:22px;border-radius:50%;background:var(--accent);color:#fff;display:grid;place-items:center;font-weight:800;font-size:12px;flex-shrink:0}
+.how p{margin:0;font-size:13px;font-weight:600}
+.btn-primary,.btn-ghost,.linkish{font:inherit;cursor:pointer;border-radius:999px}
+.btn-primary{background:linear-gradient(180deg,var(--accent),var(--accent2));color:#fff;border:0;padding:12px 26px;font-weight:800;box-shadow:0 8px 20px rgba(13,148,136,.35)}
+.btn-primary:hover{transform:translateY(-1px)}.btn-primary:disabled{opacity:.5;cursor:not-allowed}
+.btn-primary.small{padding:8px 16px;font-size:13px}
+.btn-ghost{background:transparent;border:1px solid var(--line);padding:12px 22px;font-weight:700;color:var(--ink)}
+.linkish{background:none;border:0;color:var(--accent);font-weight:700;text-decoration:underline;padding:0}
+.notice{background:rgba(212,160,23,.10);border:1px solid rgba(212,160,23,.4);border-left:5px solid var(--gold);border-radius:14px;padding:12px 16px;font-size:13.5px;margin:16px 0}
+.card{padding:22px;margin-top:14px}
+.visa-row{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:12px}
+@media(max-width:640px){.visa-row{grid-template-columns:1fr}}
+.visa{border:1px solid var(--line);border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:6px;text-align:center}
+.visa.on{border-color:var(--accent);box-shadow:0 0 0 3px rgba(13,148,136,.12)}
+.visa.off{opacity:.55}
+.visa span{color:var(--mut);font-size:13px}
+fieldset{border:0;padding:0;margin:0 0 6px}
+legend{font-family:Sora,sans-serif;font-weight:800;font-size:16px;margin-bottom:12px}
+label{display:block;font-weight:600;font-size:14px;margin:14px 0 6px}
+input,select{width:100%;padding:11px 14px;border:1px solid var(--line);border-radius:12px;font:inherit;background:rgba(255,255,255,.65);color:var(--ink)}
+html.dark input,html.dark select{background:rgba(0,0,0,.25)}
+input:focus,select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(13,148,136,.18)}
+.help{font-size:13px;color:var(--mut)}.help a{color:var(--accent);font-weight:700}
+.step{display:none}.step.on{display:block;animation:pop .18s ease}
+@keyframes pop{from{opacity:0;transform:translateY(6px)}to{opacity:1}}
+.dots{display:flex;gap:8px;margin-bottom:16px}
+.dots span{width:34px;height:6px;border-radius:99px;background:var(--line)}
+.dots span.on{background:var(--accent)}
+.navrow{display:flex;gap:10px;margin-top:16px;flex-wrap:wrap}.navrow.center{justify-content:center}
+.hp{position:absolute!important;left:-9999px!important}
+.banner{border-radius:var(--r);padding:18px 22px;font-weight:800;font-size:17px;margin-bottom:14px;border:1px solid}
+.banner.passed{background:rgba(21,128,61,.12);border-color:var(--ok);color:var(--ok)}
+.banner.failed{background:rgba(185,28,28,.10);border-color:var(--bad);color:var(--bad)}
+.banner.incomplete{background:rgba(161,98,7,.10);border-color:var(--warn);color:var(--warn)}
+.banner.unavailable{background:rgba(29,78,216,.08);border-color:var(--info);color:var(--info)}
+.chk{border:1px solid var(--line);border-radius:16px;padding:16px 18px;margin:10px 0;background:var(--glass);backdrop-filter:blur(10px)}
+.chk .row1{display:flex;gap:10px;align-items:flex-start}
+.chk .ic{width:30px;height:30px;border-radius:10px;display:grid;place-items:center;flex-shrink:0;color:#fff}
+.ic.passed{background:var(--ok)}.ic.failed{background:var(--bad)}.ic.incomplete{background:var(--warn)}
+.ic svg{width:16px;height:16px}
+.chk b{font-size:14.5px}
+.chk .comp{font-size:13.5px;color:var(--mut);margin-top:6px}
+.chk .comp strong{color:var(--ink)}
+.chk .src{font-size:12.5px;margin-top:8px}
+.chk .src a{color:var(--accent);font-weight:800;text-decoration:none}
+.chk .note{font-size:12.5px;background:rgba(212,160,23,.10);border-radius:10px;padding:8px 10px;margin-top:8px}
+footer{border-top:1px solid var(--line);background:var(--glass);padding:18px 0;font-size:12.5px;color:var(--mut);text-align:center}
+footer p{margin:4px 0}
+.modal{position:fixed;inset:0;background:rgba(5,20,15,.5);backdrop-filter:blur(6px);display:grid;place-items:center;z-index:80;padding:16px}
+.modal[hidden]{display:none}
+.mcard{max-width:460px;width:100%;max-height:80vh;overflow:auto;padding:22px}
+.mcard ul{padding-left:18px;font-size:14px}.mcard li{margin:8px 0}
+#toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:#10221d;color:#fff;padding:10px 18px;border-radius:12px;font-size:13.5px;opacity:0;pointer-events:none;transition:.2s;z-index:99}
+#toast.on{opacity:1}
+@media print{header,footer,.navrow,.notice,.btn-primary,.btn-ghost{display:none!important}body{background:#fff}.glass{box-shadow:none;border:1px solid #ccc}}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+```
+
+## app.js — full Phase 0 + Phase 1.5 PWA layer combined
+
+```js
+"use strict";
+const CFG={api:"/api/check"};
+
+const I18N={
+en:{skip:"Skip to content",tag:"Published rules · plain English",h1:"Check the UK visa rules yourself — in plain words",
+sub:"Answer a few short questions. We compare your answers with the rules published on GOV.UK and show you each one. Free. No sign-up. We never store your answers.",
+how1:"Answer 6 short questions",how2:"See every rule: passed, failed, or missing answer",how3:"Check each rule yourself on GOV.UK",
+start:"Start the check",soon:"Coming soon",covered:"Covered right now",
+notice:"⚠️ This is general information, not immigration advice. We are not regulated immigration advisers. Always confirm on GOV.UK or with a regulated adviser.",
+s1:"Step 1 · Sponsorship",s2:"Step 2 · Job & salary",s3:"Step 3 · English & money",s4:"Step 4 · Quick check",
+s4txt:"Ready. Nothing you typed is saved anywhere. The check runs once and the answer comes back to this page only.",
+f_cos:"Do you have a valid Certificate of Sponsorship (CoS) from a licensed sponsor?",
+f_income:"Yearly salary before tax (£)",f_rate:"Going rate for your job code (£)",
+f_rate_help:"Find your job code and its going rate in the official table:",open_table:"Open the official table ↗",
+f_eng:"Your English level (CEFR)",f_bank:"Money in savings (£)",
+f_cert:"Has your sponsor certified your maintenance on the CoS?",
+yes:"Yes",no:"No",back:"Back",next:"Next",check:"Check now",
+print:"Print / Save PDF",restart:"Start again",privacy:"Privacy",terms:"Terms",close:"Close",
+foot1:"VisaCheck compares your answers with rules published on GOV.UK. It is not affiliated with any government. It does not give immigration advice and stores nothing about you.",
+foot2:"Only your language and dark-mode choice are saved on your device.",
+b_passed:"Good news — based on what you entered, you meet every published condition we checked.",
+b_failed:"Based on what you entered, you do not meet one or more published conditions.",
+b_incomplete:"Almost done — answer the missing questions to complete the check.",
+b_unavailable:"Rules for this pathway are being verified right now. Please use the official guidance below.",
+entered:"You entered",missing:"Answer needed to complete this check",
+published:"Published rule",
+verify:"Check this rule on GOV.UK ↗",guidance:"Open official guidance ↗",
+e_rate:"Too many checks from one device. Please try again in an hour.",
+e_offline:"You appear to be offline — reconnect to run the check.",
+e_generic:"Something went wrong. Please try again.",
+sw_updated:"Updated — reload to use the new version.",
+install_text:"Install VisaCheck on your phone — works offline once loaded.",
+install_yes:"Install",install_no:"Not now"},
+ur:{skip:"مواد پر جائیں",tag:"سرکاری اصول · آسان زبان",h1:"برطانیہ کے ویزا اصول خود چیک کریں — آسان الفاظ میں",
+sub:"چند مختصر سوالات کا جواب دیں۔ ہم آپ کے جوابات کا موازنہ GOV.UK پر شائع شدہ اصولوں سے کرتے ہیں۔ مفت۔ رجسٹریشن نہیں۔ آپ کے جوابات محفوظ نہیں ہوتے۔",
+how1:"۶ مختصر سوالات کا جواب دیں",how2:"ہر اصول دیکھیں: پاس، فیل، یا جواب نامکمل",how3:"ہر اصول خود GOV.UK پر چیک کریں",
+start:"چیک شروع کریں",soon:"جلد آ رہا ہے",covered:"ابھی دستیاب",
+notice:"⚠️ یہ عمومی معلومات ہے، امیگریشن مشورہ نہیں۔ ہم منظور شدہ مشیر نہیں ہیں۔ ہمیشہ GOV.UK یا مستند مشیر سے تصدیق کریں۔",
+s1:"مرحلہ ۱ · اسپانسرشپ",s2:"مرحلہ ۲ · نوکری اور تنخواہ",s3:"مرحلہ ۳ · انگریزی اور رقم",s4:"مرحلہ ۴ · تیار",
+s4txt:"تیار۔ آپ نے جو لکھا وہ کہیں محفوظ نہیں ہوتا۔ چیک ایک بار چلتا ہے اور نتیجہ صرف اسی صفحے پر آتا ہے۔",
+f_cos:"کیا آپ کے پاس لائسنس یافتہ اسپانسر کا درست سرٹیفکیٹ آف اسپانسرشپ (CoS) ہے؟",
+f_income:"سالانہ تنخواہ (ٹیکس سے پہلے، پاؤنڈ)",f_rate:"آپ کی نوکری کی سرکاری گوئنگ ریٹ (پاؤنڈ)",
+f_rate_help:"اپنے جاب کوڈ اور گوئنگ ریٹ سرکاری جدول میں دیکھیں:",open_table:"سرکاری جدول کھولیں ↗",
+f_eng:"انگریزی کی سطح (CEFR)",f_bank:"بچت میں رقم (پاؤنڈ)",
+f_cert:"کیا اسپانسر نے آپ کے اخراجات کی ضمانت دی ہے؟",
+yes:"ہاں",no:"نہیں",back:"واپس",next:"آگے",check:"ابھی چیک کریں",
+print:"پرنٹ / PDF محفوظ کریں",restart:"دوبارہ شروع کریں",privacy:"پرائیویسی",terms:"شرائط",close:"بند کریں",
+foot1:"VisaCheck آپ کے جوابات کا GOV.UK کے شائع شدہ اصولوں سے موازنہ کرتا ہے۔ یہ کسی حکومت سے وابستہ نہیں۔ یہ امیگریشن مشورہ نہیں دیتا اور آپ کا کچھ محفوظ نہیں کرتا۔",
+foot2:"صرف آپ کی زبان اور ڈارک موڈ کا انتخاب آپ کے ڈیوائس پر محفوظ ہوتا ہے۔",
+b_passed:"خوشخبری — آپ کے دیے گئے جوابات کے مطابق آپ ہر چیک شدہ شائع شدہ شرط پورے کرتے ہیں۔",
+b_failed:"آپ کے جوابات کے مطابق آپ ایک یا زیادہ شائع شدہ شرطیں پوری نہیں کرتے۔",
+b_incomplete:"تقریباً مکمل — نامکمل سوالات کا جواب دیں تاکہ چیک مکمل ہو۔",
+b_unavailable:"اس راستے کے اصول ابھی تصدیق ہو رہے ہیں۔ براہ کرم نیچے سرکاری رہنمائی دیکھیں۔",
+entered:"آپ نے لکھا",missing:"چیک مکمل کرنے کے لیے جواب درکار ہے",
+published:"شائع شدہ شرط",
+verify:"یہ اصول GOV.UK پر چیک کریں ↗",guidance:"سرکاری رہنمائی کھولیں ↗",
+e_rate:"ایک ڈیوائس سے بہت زیادہ چیک۔ ایک گھنٹے بعد کوشش کریں۔",
+e_offline:"آپ آف لائن لگ رہے ہیں — چیک چلانے کے لیے دوباره جڑیں۔",
+e_generic:"کچھ غلط ہو گیا۔ دوبارہ کوشش کریں۔",
+sw_updated:"اپڈیٹ ہو گیا — نئی ورژن کے لیے ریفریش کریں۔",
+install_text:"VisaCheck اپنے فون پر انسٹال کریں — ایک بار لوڈ ہونے پر آف لائن کام کرتا ہے۔",
+install_yes:"انسٹال کریں",install_no:"ابھی نہیں"},
+bn:{skip:"মূল বিষয়বস্তুতে যান",tag:"প্রকাশিত নিয়ম · সহজ ভাষায়",h1:"যুক্তরাজ্যের ভিসা নিয়ম নিজেই দেখুন — সহজ ভাষায়",
+sub:"কয়েকটি ছোট প্রশ্নের উত্তর দিন। আমরা আপনার উত্তরের সাথে GOV.UK-তে প্রকাশিত নিয়মের তুলনা করে প্রতিটি দেখাই। ফ্রি। সাইন-আপ নেই। আপনার উত্তর কোথাও সংরক্ষণ করা হয় না।",
+how1:"৬টি ছোট প্রশ্নের উত্তর দিন",how2:"প্রতিটি নিয়ম দেখুন: পাস, ফেল বা অসম্পূর্ণ",how3:"প্রতিটি নিয়ম নিজে GOV.UK-তে দেখুন",
+start:"চেক শুরু করুন",soon:"শীঘ্রই আসছে",covered:"এখন উপলব্ধ",
+notice:"⚠️ এটি সাধারণ তথ্য, ইমিগ্রেশন পরামর্শ নয়। আমরা নিবন্ধিত উপদেষ্টা নই। সবসময় GOV.UK বা নিবন্ধিত উপদেষ্টার সাথে নিশ্চিত করুন।",
+s1:"ধাপ ১ · স্পন্সরশিপ",s2:"ধাপ ২ · চাকরি ও বেতন",s3:"ধাপ ৩ · ইংরেজি ও অর্থ",s4:"ধাপ ৪ · প্রস্তুত",
+s4txt:"প্রস্তুত। আপনি যা লিখেছেন কোথাও সংরক্ষিত হয় না। চেক একবার চলে এবং ফলাফল শুধু এই পৃষ্ঠায় আসে।",
+f_cos:"আপনার কি লাইসেন্সপ্রাপ্ত স্পন্সরের বৈধ সার্টিফিকেট অফ স্পন্সরশিপ (CoS) আছে?",
+f_income:"বার্ষিক বেতন (করের আগে, পাউন্ডে)",f_rate:"আপনার চাকরির সরকারি গোয়িং রেট (পাউন্ডে)",
+f_rate_help:"আপনার জব কোড ও গোয়িং রেট সরকারি টেবিলে দেখুন:",open_table:"সরকারি টেবিল খুলুন ↗",
+f_eng:"ইংরেজি দক্ষতার স্তর (CEFR)",f_bank:"সঞ্চয়ের টাকা (পাউন্ডে)",
+f_cert:"স্পন্সর কি আপনার খরচের দায়িত্ব নিয়েছে?",
+yes:"হ্যাঁ",no:"না",back:"পিছনে",next:"পরবর্তী",check:"এখনই চেক করুন",
+print:"প্রিন্ট / PDF সেভ",restart:"আবার শুরু করুন",privacy:"প্রাইভেসি",terms:"শর্তাবলী",close:"বন্ধ",
+foot1:"VisaCheck আপনার উত্তরের সাথে GOV.UK-এ প্রকাশিত নিয়মের তুলনা করে। এটি কোনো সরকারের সাথে যুক্ত নয়। এটি ইমিগ্রেশন পরামর্শ দেয় না এবং আপনার কিছু সংরক্ষণ করে না।",
+foot2:"শুধু আপনার ভাষা ও ডার্ক-মোড পছন্দ আপনার ডিভাইসে সংরক্ষিত হয়।",
+b_passed:"সুখবর — আপনার দেওয়া উত্তর অনুযায়ী আপনি যাচাইকৃত প্রতিটি প্রকাশিত শর্ত পূরণ করেছেন।",
+b_failed:"আপনার উত্তর অনুযায়ী আপনি এক বা একাধিক প্রকাশিত শর্ত পূরণ করছেন না।",
+b_incomplete:"প্রায় শেষ — অসম্পূর্ণ প্রশ্নের উত্তর দিন।",
+b_unavailable:"এই পথের নিয়ম এখন যাচাই চলছে। নিচের সরকারি নির্দেশিকা দেখুন।",
+entered:"আপনি লিখেছেন",missing:"চেক সম্পূর্ণ করতে উত্তর দরকার",
+published:"প্রকাশিত শর্ত",
+verify:"এই নিয়ম GOV.UK-তে দেখুন ↗",guidance:"সরকারি নির্দেশিকা খুলুন ↗",
+e_rate:"এক ডিভাইস থেকে অনেক চেক। এক ঘণ্টা পর চেষ্টা করুন।",
+e_offline:"আপনি অফলাইন বলে মনে হচ্ছে — চেক চালাতে পুনরায় সংযুক্ত হন।",
+e_generic:"কিছু ভুল হয়েছে। আবার চেষ্টা করুন।",
+sw_updated:"আপডেট হয়েছে — নতুন ভার্সনের জন্য রিফ্রেশ করুন।",
+install_text:"VisaCheck আপনার ফোনে ইনস্টল করুন — একবার লোড হলে অফলাইন কাজ করে।",
+install_yes:"ইনস্টল করুন",install_no:"এখন না"}};
+
+const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const store={g:k=>{try{return localStorage.getItem(k)}catch(e){return null}},s:(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}}};
+let LANG=store.g("vcLang")||"en";if(!I18N[LANG])LANG="en";
+const t=k=>I18N[LANG][k]||I18N.en[k]||k;
+
+const LABELS={has_valid_cos:{en:"Valid Certificate of Sponsorship",ur:"درست اسپانسرشپ سرٹیفکیٹ",bn:"বৈধ স্পন্সরশিপ সার্টিফিকেট"},
+annual_income_gbp:{en:"Yearly salary",ur:"سالانہ تنخواہ",bn:"বার্ষিক বেতন"},
+occupation_going_rate_gbp:{en:"Going rate for your job",ur:"نوکری کی گوئنگ ریٹ",bn:"চাকরির গোয়িং রেট"},
+english_level_cefr:{en:"English level",ur:"انگریزی سطح",bn:"ইংরেজি স্তর"},
+bank_balance_gbp:{en:"Savings",ur:"بچت",bn:"সঞ্চয়"},
+maintenance_certified_by_sponsor:{en:"Sponsor certified maintenance",ur:"اسپانسر نے اخراجات کی ضمانت",bn:"স্পন্সর খরচের দায়িত্ব"}};
+const MONEY=/gbp$/;
+
+function applyI18n(){
+  document.documentElement.lang=LANG;
+  document.documentElement.dir=LANG==="ur"?"rtl":"ltr";
+  $$("[data-i18n]").forEach(n=>{const v=t(n.dataset.i18n);if(v)n.textContent=v});
+}
+$("#langSel").value=LANG;
+$("#langSel").addEventListener("change",e=>{LANG=e.target.value;store.s("vcLang",LANG);applyI18n()});
+function setTheme(d){document.documentElement.classList.toggle("dark",d);store.s("vcTheme",d?"dark":"light")}
+setTheme((store.g("vcTheme")||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"))==="dark");
+$("#themeBtn").addEventListener("click",()=>setTheme(!document.documentElement.classList.contains("dark")));
+
+const pages=["pg-home","pg-form","pg-results"];
+function go(id){pages.forEach(p=>$("#"+p).hidden=p!==id);window.scrollTo({top:0,behavior:"smooth"})}
+$("#startBtn").addEventListener("click",()=>go("pg-form"));
+$(".startBtn2").addEventListener("click",()=>go("pg-form"));
+
+let step=0;
+const STEPS=4;
+function showStep(){
+  $$(".step").forEach(f=>f.classList.toggle("on",+f.dataset.step===step));
+  $$("#dots span").forEach((d,i)=>d.classList.toggle("on",i<=step));
+  $("#backBtn").disabled=step===0;
+  $("#nextBtn").hidden=step===STEPS-1;
+  $("#checkBtn").hidden=step!==STEPS-1;
+}
+$("#nextBtn").addEventListener("click",()=>{if(step<STEPS-1){step++;showStep()}});
+$("#backBtn").addEventListener("click",()=>{if(step>0){step--;showStep()}});
+showStep();
+
+function collectProfile(){
+  const p={};
+  ["has_valid_cos","maintenance_certified_by_sponsor"].forEach(k=>{
+    const v=$("#"+k).value;if(v!=="")p[k]=v==="true";
+  });
+  ["annual_income_gbp","occupation_going_rate_gbp","bank_balance_gbp"].forEach(k=>{
+    const v=$("#"+k).value.trim();if(v!=="")p[k]=Number(v);
+  });
+  const e=$("#english_level_cefr").value;if(e)p.english_level_cefr=e;
+  return p;
+}
+const IC={passed:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7"/></svg>',
+failed:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+incomplete:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M12 8v5"/><circle cx="12" cy="16.5" r="1.4" fill="currentColor"/></svg>'};
+
+function fmt(k,v){
+  if(typeof v==="boolean")return v?t("yes"):t("no");
+  if(typeof v==="number")return MONEY.test(k)?"£"+v.toLocaleString("en-GB"):v;
+  return v;
+}
+function render(data){
+  const first=data.results[0];
+  const st=first?first.overall_status:"unavailable";
+  const b=$("#banner");b.className="banner "+st;b.textContent=t("b_"+st);
+  $("#cards").innerHTML=(first?first.checks:[]).map(c=>{
+    const label=(LABELS[c.var]||{})[LANG]||(LABELS[c.var]||{}).en;
+    return `<div class="chk">
+      <div class="row1"><span class="ic ${c.status}">${IC[c.status]}</span>
+      <div><b>${esc(c.description)}</b>
+      ${c.summary?`<div class="comp"><strong>${t("published")}:</strong> ${esc(c.summary)}</div>`:""}
+      ${c.status!=="incomplete"&&c.entered!==undefined&&label?`<div class="comp">${t("entered")}: <strong>${esc(label)} — ${esc(fmt(c.var,c.entered))}</strong></div>`:""}
+      ${c.status==="incomplete"?`<div class="comp">${t("missing")}</div>`:""}
+      ${c.ui_note?`<div class="note">${esc(c.ui_note)}</div>`:""}
+      <div class="src"><a href="${esc(c.source_url)}" target="_blank" rel="noopener">${t("verify")}</a></div>
+      </div></div></div>`;
+  }).join("")+(first?`<div class="navrow center"><a class="btn-primary" style="text-decoration:none" href="${esc(first.official_guidance_url)}" target="_blank" rel="noopener">${t("guidance")}</a></div>`:"");
+  go("pg-results");
+}
+$("#form").addEventListener("submit",async e=>{
+  e.preventDefault();
+  if(e.target.website.value)return;
+  const btn=$("#checkBtn");btn.disabled=true;
+  let token="";
+  try{if(window.turnstile)token=turnstile.getResponse()||""}catch(_){}
+  try{
+    const r=await fetch(CFG.api,{method:"POST",headers:{"content-type":"application/json"},
+      body:JSON.stringify({iso:"GB",profile:collectProfile(),turnstileToken:token})});
+    if(r.status===429){toast(t("e_rate"));return}
+    if(!r.ok)throw 0;
+    render(await r.json());
+  }catch(_){
+    if(!navigator.onLine)toast(t("e_offline"));
+    else toast(t("e_generic"));
+  }
+  finally{btn.disabled=false}
+});
+
+$("#printBtn").addEventListener("click",()=>window.print());
+$("#againBtn").addEventListener("click",()=>{step=0;showStep();go("pg-form")});
+$("#privBtn").addEventListener("click",()=>$("#mPriv").hidden=false);
+$("#termsBtn").addEventListener("click",()=>$("#mTerms").hidden=false);
+$$(".mclose").forEach(b=>b.addEventListener("click",e=>e.target.closest(".modal").hidden=true));
+$$(".modal").forEach(m=>m.addEventListener("click",e=>{if(e.target===m)m.hidden=true}));
+function toast(m){const el=$("#toast");el.textContent=m;el.classList.add("on");setTimeout(()=>el.classList.remove("on"),3000)}
+applyI18n();
+
+/* ============ PWA: service worker + install prompt (Phase 1.5) ============ */
+$("#startBtn").addEventListener("click",()=>store.s("vcUsedOnce","1"));
+
+if('serviceWorker' in navigator){
+  window.addEventListener('load',()=>{
+    navigator.serviceWorker.register('/sw.js',{scope:'/'})
+      .then(reg=>{
+        reg.addEventListener('updatefound',()=>{
+          const nw=reg.installing;if(!nw)return;
+          nw.addEventListener('statechange',()=>{
+            if(nw.state==='installed'&&navigator.serviceWorker.controller)toast(t('sw_updated'));
+          });
+        });
+      })
+      .catch(err=>console.warn('SW register failed:',err));
+  });
+}
+
+let deferredPrompt=null;
+window.addEventListener('beforeinstallprompt',e=>{
+  e.preventDefault();deferredPrompt=e;
+  if(store.g('vcUsedOnce')==='1')showInstallBanner();
+});
+window.addEventListener('appinstalled',()=>{
+  deferredPrompt=null;
+  const banner=$('#installBanner');if(banner)banner.hidden=true;
+});
+
+function showInstallBanner(){
+  let banner=$('#installBanner');
+  if(!banner){
+    banner=document.createElement('div');
+    banner.id='installBanner';
+    banner.className='install-banner';
+    banner.setAttribute('role','dialog');
+    banner.setAttribute('aria-live','polite');
+    banner.innerHTML=`
+      <span class="ib-text" data-i18n="install_text">Install VisaCheck on your phone — works offline once loaded.</span>
+      <button class="btn-primary small" id="installYes" data-i18n="install_yes">Install</button>
+      <button class="btn-ghost small" id="installNo" data-i18n="install_no" aria-label="Dismiss">Not now</button>
+    `;
+    document.body.appendChild(banner);
+    applyI18n();
+    $('#installYes').addEventListener('click',async()=>{
+      if(!deferredPrompt)return;
+      deferredPrompt.prompt();
+      await deferredPrompt.userChoice;
+      deferredPrompt=null;
+      banner.hidden=true;
+    });
+    $('#installNo').addEventListener('click',()=>{banner.hidden=true});
+  }
+  banner.hidden=false;
+}
+```
+
+## app.css Phase 1.5 additions (append to existing app.css)
+
+```css
+.install-banner{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);
+  background:var(--glass);backdrop-filter:blur(14px);border:1px solid var(--line);
+  border-radius:16px;box-shadow:var(--sh);padding:12px 16px;
+  display:flex;align-items:center;gap:10px;z-index:90;max-width:92vw}
+.install-banner .ib-text{font-size:13.5px;font-weight:600;color:var(--ink)}
+.install-banner[hidden]{display:none}
+@media print{.install-banner{display:none!important}}
+@media(prefers-reduced-motion:reduce){.install-banner{transition:none}}
+```
+
+## functions/api/check.js
+
+```js
+import rules from "../../data/rules.json";
+import jsonLogic from "json-logic-js";
+
+const json=(o,s=200)=>new Response(JSON.stringify(o),{status:s,headers:{"content-type":"application/json"}});
+const isMissing=v=>v===undefined||v===null||v==="";
+
+function extractVars(o,out=[]){
+  if(o&&typeof o==="object"){
+    if(o.var!==undefined)out.push(o.var);
+    else for(const k in o)extractVars(o[k],out);
+  }
+  return [...new Set(out)];
+}
+
+async function verifyTurnstile(env,token,ip){
+  if(!env.TURNSTILE_SECRET)return true;
+  const r=await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify",{
+    method:"POST",headers:{"content-type":"application/json"},
+    body:JSON.stringify({secret:env.TURNSTILE_SECRET,response:token,remoteip:ip})});
+  return (await r.json()).success===true;
+}
+
+async function rateLimit(env,ip){
+  if(!env.RATE)return true;
+  const key=`rl:${ip}:${Math.floor(Date.now()/3600000)}`;
+  const n=parseInt(await env.RATE.get(key)||"0",10)+1;
+  await env.RATE.put(key,String(n),{expirationTtl:3700});
+  return n<=10;
+}
+
+export async function onRequestPost({request,env}){
+  try{
+    const ip=request.headers.get("cf-connecting-ip")||"anon";
+    if(!await rateLimit(env,ip))return json({error:"rate_limited"},429);
+    const body=await request.json();
+    if(body.website)return json({ok:true});
+    if(!/^[A-Z]{2}$/.test(body.iso||""))return json({error:"bad_input"},400);
+    if(JSON.stringify(body.profile||"").length>4000)return json({error:"bad_input"},400);
+    if(!await verifyTurnstile(env,body.turnstileToken||"",ip))
+      return new Response("Blocked",{status:403});
+
+    const allowed=new Set();
+    rules.countries.forEach(c=>c.categories.forEach(cat=>cat.rules.forEach(r=>extractVars(r.logic_json).forEach(v=>allowed.add(v)))));
+    const profile={};
+    for(const[k,v]of Object.entries(body.profile||{})){
+      if(!allowed.has(k))continue;
+      profile[k]=(typeof v==="string"&&/^-?\d+(\.\d+)?$/.test(v))?Number(v):v;
+    }
+
+    const country=rules.countries.find(c=>c.iso===body.iso);
+    if(!country)return json({error:"not_covered"},404);
+
+    const now=Date.now();
+    const results=country.categories.map(cat=>{
+      const checked=cat.rules
+        .filter(r=>new Date(r.valid_from).getTime()<=now&&(!r.valid_to||new Date(r.valid_to).getTime()>=now))
+        .filter(r=>!JSON.stringify(r).includes("PENDING_HUMAN_CLICK"))
+        .map(r=>{
+          const vars=extractVars(r.logic_json);
+          const missing=vars.filter(v=>isMissing(profile[v]));
+          if(missing.length)return{rule_id:r.rule_id,var:vars[0],description:r.description,
+            status:"incomplete",ui_note:r.ui_note||null,source_url:r.source_url};
+          const passed=!!jsonLogic.apply(r.logic_json,profile);
+          return{rule_id:r.rule_id,var:vars.find(v=>MONEY_LIKE(v))||vars[0],description:r.description,
+            summary:r.summary||null,status:passed?"passed":"failed",
+            entered:passedValue(r,profile),ui_note:r.ui_note||null,source_url:r.source_url};
+        });
+      const allPassed=checked.length>0&&checked.every(c=>c.status==="passed");
+      const hasInc=checked.some(c=>c.status==="incomplete");
+      return{category_id:cat.category_id,visa_name:cat.visa_name,
+        official_guidance_url:cat.official_guidance_url,
+        overall_status:checked.length===0?"unavailable":allPassed?"passed":hasInc?"incomplete":"failed",
+        checks:checked};
+    });
+
+    return json({country_iso:country.iso,evaluated_at:new Date().toISOString(),results});
+  }catch(e){
+    console.error("check failed:",e);
+    return json({error:"internal"},500);
+  }
+}
+const MONEY_LIKE=v=>/gbp|balance|income|rate/i.test(v);
+function passedValue(r,profile){
+  const s=JSON.stringify(r.logic_json);
+  for(const v of extractVars(r.logic_json)){
+    if(MONEY_LIKE(v)&&profile[v]!==undefined)
+      return s.includes('"'+v+'"')&&typeof profile[v]==="number"?profile[v]:profile[v];
+  }
+  return undefined;
+}
+```
+
+## _headers (Phase 0 + Phase 1.5 combined)
+
+```
+/*
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), idle-detection=()
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'; upgrade-insecure-requests
+
+/sw.js
+  Service-Worker-Allowed: /
+  Cache-Control: no-cache, no-store, must-revalidate
+
+/manifest.webmanifest
+  Content-Type: application/manifest+json
+  Cache-Control: public, max-age=86400
+
+/icon-*.png
+  Cache-Control: public, max-age=31536000, immutable
+
+/screenshot-*.png
+  Cache-Control: public, max-age=31536000, immutable
+```
+
+## data/rules.json (Phase 0 — gated schema with PENDING_HUMAN_CLICK)
+
+```json
+{
+  "version": "PENDING_HUMAN_CLICK",
+  "countries": [
+    {
+      "iso": "GB",
+      "name": "United Kingdom",
+      "categories": [
+        {
+          "category_id": "skilled_worker",
+          "visa_name": "Skilled Worker visa",
+          "official_guidance_url": "https://www.gov.uk/skilled-worker-visa",
+          "rules": [
+            {
+              "rule_id": "sw_cos_valid",
+              "description": "You must have a valid Certificate of Sponsorship from a licensed sponsor",
+              "summary": "PENDING_HUMAN_CLICK — paste verbatim published wording here during click-through",
+              "valid_from": "PENDING_HUMAN_CLICK",
+              "valid_to": null,
+              "logic_json": {"var": "has_valid_cos"},
+              "source_url": "https://www.gov.uk/skilled-worker-visa",
+              "ui_note": null
+            },
+            {
+              "rule_id": "sw_salary_threshold",
+              "description": "Your salary must meet or exceed the lower of £38,700 or the going rate for your job",
+              "summary": "PENDING_HUMAN_CLICK — paste verbatim published wording here during click-through",
+              "valid_from": "PENDING_HUMAN_CLICK",
+              "valid_to": null,
+              "logic_json": {"or": [
+                {">=":[{"var":"annual_income_gbp"},38700]},
+                {"and":[{">=":[{"var":"annual_income_gbp"},{"var":"occupation_going_rate_gbp"}]},{"<":[{"var":"occupation_going_rate_gbp"},38700]}]}
+              ]},
+              "source_url": "https://www.gov.uk/skilled-worker-visa/how-much-you-will-earn",
+              "ui_note": null
+            },
+            {
+              "rule_id": "sw_english_b1",
+              "description": "You must meet the English language requirement at CEFR B1 or above",
+              "summary": "PENDING_HUMAN_CLICK — paste verbatim published wording here during click-through",
+              "valid_from": "PENDING_HUMAN_CLICK",
+              "valid_to": null,
+              "logic_json": {"in": [{"var":"english_level_cefr"}, ["B1","B2","C1","C2"]]},
+              "source_url": "https://www.gov.uk/skilled-worker-visa/knowledge-of-english",
+              "ui_note": null
+            },
+            {
+              "rule_id": "sw_maintenance",
+              "description": "You must have £1,270 in savings unless your sponsor certified your maintenance on the CoS",
+              "summary": "PENDING_HUMAN_CLICK — paste verbatim published wording here during click-through",
+              "valid_from": "PENDING_HUMAN_CLICK",
+              "valid_to": null,
+              "logic_json": {"or": [
+                {"var":"maintenance_certified_by_sponsor"},
+                {">=":[{"var":"bank_balance_gbp"},1270]}
+              ]},
+              "source_url": "https://www.gov.uk/skilled-worker-visa/how-much-money-you-will-need",
+              "ui_note": null
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+---
+
+**END OF PART 1.** Part 2 (next message) covers Phase 1 verification steps, Phase 1.5 PWA layer (manifest + sw.js), acceptance criteria, do-not list, and final delivery instructions. Reply with "part 2" and I'll send it.
+```
+
+---
+
+Send "part 2" and I'll paste the second half — Phase 1 click-through steps, full `manifest.webmanifest` + `sw.js` specs, combined acceptance criteria, do-not list, and the delivery sequence.

@@ -1,0 +1,212 @@
+     1→# VisaCheck — Project Worklog
+     2→
+     3→This worklog tracks the Phase 0 + Phase 1.5 PWA build of VisaCheck, the privacy-first, store-nothing UK visa rule checker. Updates here are append-only — every contributor reads previous entries before starting and appends a new section after finishing.
+     4→
+     5→---
+     6→Task ID: 1
+     7→Agent: main (Z.ai Code)
+     8→Task: Build VisaCheck Phase 0 + Phase 1.5 from scratch as an installable PWA in the Next.js 16 sandbox, honoring every hard constraint from the user's spec (store-nothing, PENDING_HUMAN_CLICK gate, strict CSP, PECR-minimal storage, RTL support for Urdu, install banner gated by vcUsedOnce, accessibility baseline, offline shell).
+     9→
+    10→Work Log:
+    11→- Read the existing Next.js 16 project state (package.json, next.config.ts, layout.tsx, page.tsx, globals.css, prisma schema). Confirmed project is Next.js 16 + TypeScript 5 + Tailwind 4 + shadcn/ui (New York style) + Prisma (unused here — store-nothing).
+    12→- Built the i18n module (`src/lib/i18n.ts`) with full en / ur / bn dictionaries. Includes all six Phase 1.5 strings (`sw_updated`, `e_offline`, `install_text`, `install_yes`, `install_no`) plus the previously-missing `published` string.
+    13→- Built the rules data (`src/lib/rules-data.ts`) — 12 UK Skilled Worker visa rules across 5 categories (core, job, funds, language, character). Every rule ships with `status: "PENDING_HUMAN_CLICK"` so `JSON.stringify(rule).includes("PENDING_HUMAN_CLICK")` returns true for all of them — the gate works on every rule by design.
+    14→- Built the rules engine (`src/lib/rules-engine.ts`) — pure in-memory evaluator. The gate runs at the engine layer: if the rule's serialized JSON contains `PENDING_HUMAN_CLICK`, `displayedVerdict` is forced to `"pending"` regardless of what the logical `evaluate()` returned. The `logicalVerdict` is preserved for transparency.
+    15→- Built the API route (`src/app/api/check/route.ts`) — `POST /api/check`, runtime `nodejs`, dynamic. Reads answers + lang from the request body, evaluates in-memory, returns the result with strict no-store cache headers. No logging of answers, no disk writes, no KV.
+    16→- Built the VisaCheck UI components in `src/components/visa-check/`:
+    17→  - `visa-check-app.tsx` — top-level shell, stage state machine (home → wizard → results), URL shortcut parsing (for `?source=pwa&go=form` and `?open=privacy` manifest shortcuts)
+    18→  - `header.tsx` — brand mark, language dropdown (en/ur/bn), theme toggle. Syncs `<html lang>` + `<html dir>` for screen readers + RTL.
+    19→  - `footer.tsx` — Privacy / Terms links, sticky to bottom (via `mt-auto`)
+    20→  - `home.tsx` — hero, three honesty notes (amber-styled disclaimers), How It Works cards, Start CTA. Click handler marks vcUsedOnce + dispatches `vc-used-once` event.
+    21→  - `wizard.tsx` — 6-step form (nationality, job, salary, sponsorship, English, funds/character). Step dots, validation, RTL-aware icons.
+    22→  - `results.tsx` — per-rule cards with status pills, gov.uk source links, filter buttons. Every verdict shows "being verified" because the gate holds.
+    23→  - `modals.tsx` — Privacy and Terms dialogs
+    24→  - `install-banner.tsx` — `beforeinstallprompt` + `appinstalled` + `vcUsedOnce` gating. Renders only when `deferred !== null` and `vcUsedOnce === "1"`. role="dialog", aria-live="polite", dismiss button has aria-label.
+    25→  - `sw-register.tsx` — registers `/sw.js` with scope "/", listens for `updatefound`, fires `sw_updated` toast on install.
+    26→  - `store.ts` — Zustand store. Persists ONLY `lang` + `usedOnce` to localStorage under key `vcLang`. Stage / step / answers / result live in-memory only.
+    27→- Set up the root layout with manifest link, iOS standalone metas, theme provider (next-themes with storageKey `vcTheme`), skip-to-content link, Sora + Inter fonts.
+    28→- Set up the strict CSP via `src/proxy.ts` (Next.js 16 renamed `middleware.ts` → `proxy.ts`). Per-request nonce generated via `crypto.randomUUID`, attached to `script-src 'nonce-{value}' 'self' https://challenges.cloudflare.com`. No `'unsafe-inline'` in script-src. The nonce is passed to React via the `x-nonce` request header; Next.js 16 auto-injects it into its own inline RSC hydration scripts.
+    29→- Built `public/manifest.webmanifest` with the exact schema from spec §3.1 (name, short_name, description, start_url with `?source=pwa`, scope `/`, display standalone, background_color `#f2f6f5`, theme_color `#0d9488`, three icons including maskable, two shortcuts, two screenshots).
+    30→- Built `public/sw.js` implementing the three strategies:
+    31→  - SHELL CACHE: stale-while-revalidate, versioned `visacheck-shell-v1`. skipWaiting + clients.claim. Old `visacheck-shell-*` caches evicted on activate.
+    32→  - POST /api/check: pass-through, never cached.
+    33→  - Turnstile: pass-through, never cached.
+    34→  - Range requests: pass-through.
+    35→  - Only GET + HTTP 200 + non-opaque responses ever enter the cache.
+    36→- Generated icons via `scripts/gen-icons.mjs` (Sharp):
+    37→  - `icon-192.png` (192×192) — full-bleed teal shield + white checkmark
+    38→  - `icon-512.png` (512×512) — same
+    39→  - `icon-maskable-512.png` (512×512) — full-bleed background fill, shield scaled to ~78% inside the safe zone
+    40→  - `apple-touch-icon.png` (180×180, bonus for iOS)
+    41→  - `favicon-32.png` (32×32, bonus)
+    42→- Captured screenshots via agent-browser:
+    43→  - `screenshot-mobile-1.png` (1080×1920 portrait) — home screen
+    44→  - `screenshot-desktop-1.png` (1280×720) — results page
+    45→- Wrote `_headers` at project root for Cloudflare Pages deployment (Service-Worker-Allowed, manifest content-type, immutable icon cache, strict CSP).
+    46→- Updated `next.config.ts` to set static-asset headers (Service-Worker-Allowed, manifest content-type, immutable icon cache) — the per-request nonce CSP lives in `proxy.ts`.
+    47→- Ran `bun run lint` — clean (0 errors, 0 warnings).
+    48→
+    49→Stage Summary:
+    50→- ✅ Dev server runs on port 3000 without fatal errors
+    51→- ✅ Home page renders with three honesty notes, hero, How It Works, Start CTA
+    52→- ✅ Language switcher (en/ur/bn) applies RTL for Urdu (`<html dir="rtl">`)
+    53→- ✅ Theme toggle works (light/dark, persisted as `vcTheme`)
+    54→- ✅ 6-step wizard flow validates input and navigates correctly
+    55→- ✅ `POST /api/check` returns 200 with `displayedVerdict: "pending"` for all rules — the gate holds (verified via curl + browser)
+    56→- ✅ Results page renders 12 rule cards, each with gov.uk source link and "being verified" status pill
+    57→- ✅ Privacy and Terms modals open from footer
+    58→- ✅ Service worker registered with scope "/", `visacheck-shell-v1` cache populated (29 entries)
+    59→- ✅ SW cache audit: `hasApiCheck: false`, `hasUserData: false` — store-nothing verified
+    60→- ✅ Offline mode: home loads from cache, wizard fills, e_offline toast appears on submit
+    61→- ✅ Install banner appears only when `beforeinstallprompt` fires AND `vcUsedOnce === "1"` (verified via synthetic event)
+    62→- ✅ Install banner is keyboard-dismissable, role="dialog", aria-live="polite", aria-label on dismiss
+    63→- ✅ Strict CSP via per-request nonce — no `'unsafe-inline'` in script-src
+    64→- ✅ localStorage contains only `vcLang`, `vcTheme`, `vcUsedOnce` — PECR-minimal verified
+    65→
+    66→Manual sign-off tasks (pre-launch):
+    67→1. Native-speaker review of the Urdu and Bengali translations of the 6 new strings (AI-drafted).
+    68→2. Lawyer / regulated immigration adviser glance at the Privacy and Terms disclaimers.
+    69→3. Lighthouse PWA audit on the deployed Cloudflare URL (target ≥ 90).
+    70→
+    71→Next-phase opportunities:
+    72→- Add more languages (Arabic, Spanish, Portuguese, French) — the i18n module is ready to extend.
+    73→- Multi-country expansion: refactor `rules-data.ts` to take a country parameter (Canada, Australia).
+    74→- Wire the research relay to replace unverified competitor reviews.
+    75→- Add a "Print / Save as PDF" refined stylesheet for the results page.
+    76→- Add per-rule deep-link share URLs (without storing user data — encode answers in the URL fragment).
+    77→
+    78→---
+    79→Task ID: g1
+    80→Agent: general-purpose (countries registry)
+    81→Task: Build /home/z/my-project/src/lib/countries.ts — registry of 6 supported destination countries (GB, US, CA, AU, DE, AE) with localized names, authorities, currencies, timezones, available visa categories, and popular origin routes.
+    82→
+    83→Work Log:
+    84→- Read /home/z/my-project/worklog.md to absorb Phase 0 + Phase 1.5 context (store-nothing PWA, PENDING_HUMAN_CLICK gate, en/ur/bn i18n, in-memory rules engine, strict CSP). Confirmed the countries module slots into the "Multi-country expansion" next-phase item by giving the engine a destination registry keyed by ISO alpha-2.
+    85→- Inspected existing lib modules (i18n.ts, rules-data.ts) to match coding style: top-of-file purpose comment, explicit interfaces, inline JSDoc, no React/Next imports, no I/O, no console, no storage.
+    86→- Verified tsconfig.json — strict mode on, ES2017 target, bundler moduleResolution, `@/*` path alias to ./src/*. Wrote the new module against strict types only.
+    87→- Authored src/lib/countries.ts exporting: `Country` interface, `COUNTRIES: Country[]` (6 entries), `getCountry(iso: string): Country | undefined` (case-insensitive, trims whitespace, uppercase-normalized lookup), and `SUPPORTED_FLAGS` constant = space-joined emoji flags derived from COUNTRIES (single source of truth, no drift if a country is added).
+    88→- Each of the 6 entries (GB, US, CA, AU, DE, AE) carries: emoji flag, localized name (en/ur/bn), localized authority name (en/ur/bn), shortName acronym (UKVI/USCIS/IRCC/Home Affairs/BAMF/ICP), https authority URL, ISO 4217 currency, official language string, IANA timezone, available=true flag, 5 visa categoryIds (skilled_worker/student/visitor/family/business), and 4 popularRoutes.
+    89→- Used the exact Urdu/Bengali translations from the task spec for both country names and authority short names (e.g. UK: برطانیہ / یوکے وی آئی ; যুক্তরাজ্য / ইউকেভিআই).
+    90→- Top-of-file comment block explicitly states the contract: "This module is pure data. No I/O, no React, no storage. Add new countries by appending to COUNTRIES."
+    91→- Type-checked with `bunx tsc --noEmit` — zero errors in src/lib/countries.ts (all 5 reported project errors are pre-existing in unrelated files: examples/websocket, skills/image-edit, skills/stock-analysis-skill, src/components/visa-check/results.tsx).
+    92→- Linted with `bunx eslint src/lib/countries.ts` — clean, 0 errors, 0 warnings.
+    93→- Ran a runtime smoke test (temporary tsx script) covering: 6-country count, ISO order GB,US,CA,AU,DE,AE, full en/ur/bn coverage on both name and authority.name, https URL prefix, currency length 3, timezone slash presence, 5 categoryIds, 4 popularRoutes, getCountry case-insensitivity ("GB"/"gb"/"Gb"), whitespace-trim, undefined for "XX"/"" , and SUPPORTED_FLAGS = "🇬🇧 🇺🇸 🇨🇦 🇦🇺 🇩🇪 🇦🇪". All 6 flag tokens present. Removed the smoke-test file after pass.
+    94→- Appended this section to worklog.md in append mode (existing content untouched).
+    95→
+    96→Stage Summary:
+    97→- New module src/lib/countries.ts is a strict-mode pure-data registry, no imports from React/Next, no I/O, no storage, no console.
+    98→- 6 countries exported via COUNTRIES; helper getCountry(iso) does case-insensitive + whitespace-tolerant lookup; SUPPORTED_FLAGS is derived from COUNTRIES so it cannot drift.
+    99→- Every country ships with full en/ur/bn localization on both the country name and the authority name, plus the spec-mandated shortName, URL, currency, official language, IANA timezone, 5 visa category IDs, and 4 popular origin routes.
+   100→- Verified: `bunx tsc --noEmit` 0 errors on countries.ts; `bunx eslint src/lib/countries.ts` 0 errors/0 warnings; runtime smoke test 100% pass.
+   101→- Ready to be consumed by the next multi-country step: rules-data.ts / rules-engine.ts can take a Country.iso parameter and the wizard/home can list COUNTRIES for destination selection.
+   102→
+   103→---
+   104→Task ID: g2
+   105→Agent: general-purpose (visa categories)
+   106→Task: Build /home/z/my-project/src/lib/visa-categories.ts — registry of 6 visa category types (skilled worker, student, visitor, family, business, investor) with localized names, descriptions, typical durations, sponsorship/financial-proof flags.
+   107→
+   108→Work Log:
+   109→- Read /home/z/my-project/worklog.md to absorb Phase 0 + Phase 1.5 + g1 (countries registry) context. Confirmed the visa-categories module slots into the multi-country expansion track alongside countries.ts and gives the wizard / home a category registry keyed by stable id.
+   110→- Re-read src/lib/countries.ts and tsconfig.json to match coding style (top-of-file purpose comment, explicit interfaces with JSDoc on each field, const registry array, case-insensitive + whitespace-tolerant helper, derived constant built once at module load). TS strict is on, target ES2017, bundler resolution, `@/*` path alias present but unused in this pure-data module.
+   111→- Authored src/lib/visa-categories.ts exporting: `VisaCategory` interface (id, icon, name{en,ur,bn}, description{en,ur,bn}, typicalDuration, requiresSponsorship, requiresFinancialProof, popularFor[]), `VISA_CATEGORIES: VisaCategory[]` (6 entries), `getCategory(id)` (case-insensitive + trim, lowercase-normalized lookup), `getAllCategoryIds()` returning the 6 ids in registry order, and `CATEGORIES_BY_COUNTRY: Record<string, VisaCategory[]>` derived at module load by filtering VISA_CATEGORIES on each unique ISO union found across `popularFor`.
+   112→- Used the exact translations from the task spec for the en/ur/bn names; wrote concise native Urdu + Bengali descriptions that mirror the English one-sentence contract (not verbatim transliterations) so speakers read a meaningful description rather than a calque.
+   113→- Spec-required boolean flags applied verbatim: skilled_worker / student / family → requiresSponsorship: true (student note "institution acts as sponsor", family note "family member sponsors" encoded via the description); visitor / business / investor → requiresSponsorship: false. All six → requiresFinancialProof: true. typicalDuration strings match the spec exactly (including the "Course length + short grace period" and "2.5-5 years (route to settlement)" phrasings).
+   114→- popularFor arrays exactly as specified: skilled_worker/student/visitor/family/business → ["GB","US","CA","AU","DE","AE"]; investor → ["AE","US","AU","GB"]. This means AE automatically includes the investor category in CATEGORIES_BY_COUNTRY with no special-casing needed (the spec constraint "For UAE specifically ensure investor is included" is satisfied structurally).
+   115→- Top-of-file comment block verbatim: "This module is pure data. No I/O, no React, no storage. Add new categories by appending to VISA_CATEGORIES."
+   116→- CATEGORIES_BY_COUNTRY built via an IIFE that first unions every ISO across all popularFor arrays into a Set, then for each ISO assigns the filtered list — so adding a category or repointing a popularFor automatically updates the map. Returned category objects are the same references as VISA_CATEGORIES entries (no clones) so downstream callers can rely on identity equality.
+   117→- Type-checked with `bunx tsc --noEmit` — zero errors in src/lib/visa-categories.ts (the only reported error, src/components/visa-check/results.tsx:213, is pre-existing and unrelated — same finding as g1).
+   118→- Linted with `bunx eslint src/lib/visa-categories.ts` — clean, 0 errors / 0 warnings.
+   119→- Ran a runtime smoke test (temporary tsx script, 41 assertions, file deleted after pass) covering: 6-category count, spec-order IDs, exact icon sequence, full en/ur/bn coverage on name + description, non-empty typicalDuration, all 8 spec-required boolean flags, all 6 popularFor arrays exactly, EN/UR/BN name + description spot-checks, getCategory case-insensitivity ("skilled_worker" / "SKILLED_WORKER" / "  Student  " / "Investor") + undefined for "nonexistent" and "", getAllCategoryIds ordering, CATEGORIES_BY_COUNTRY has 6 ISOs (AE,AU,CA,DE,GB,US), GB has 6 (incl investor), CA + DE have 5 (no investor), AE has 6 with investor present (spec constraint), AU has 6, and reference identity between map entries and VISA_CATEGORIES objects. 41/41 passed.
+   120→
+   121→Stage Summary:
+   122→- New module src/lib/visa-categories.ts is a strict-mode pure-data registry, no imports from React/Next, no I/O, no storage, no console.
+   123→- 6 categories exported via VISA_CATEGORIES with exact spec translations and boolean flags; helpers getCategory(id), getAllCategoryIds(), and the derived CATEGORIES_BY_COUNTRY map.
+   124→- CATEGORIES_BY_COUNTRY is derived (not hardcoded) from popularFor, so it cannot drift; the UAE investor constraint is satisfied structurally because "AE" is already in investor.popularFor.
+   125→- Verified: `bunx tsc --noEmit` 0 errors on visa-categories.ts; `bunx eslint src/lib/visa-categories.ts` 0 errors/0 warnings; runtime smoke test 41/41 pass.
+   126→- Ready to be consumed by the next multi-country step: the wizard / home can list VISA_CATEGORIES for category selection, rules-data.ts / rules-engine.ts can branch on a chosen category id, and CATEGORIES_BY_COUNTRY can power a "categories available for your destination" UI surface that pairs naturally with countries.ts.
+   127→
+   128→---
+   129→Task ID: g4
+   130→Agent: general-purpose (announcements)
+   131→Task: Build /home/z/my-project/src/lib/announcements.ts — registry of pending rule changes / consultations per country with localized titles, summaries, status, expected-effective dates, source URLs, authority names.
+   132→
+   133→Work Log:
+   134→- Read /home/z/my-project/worklog.md to absorb Phase 0 + Phase 1.5 + g1 (countries) + g2 (visa-categories) context. Confirmed the announcements module is the next multi-country expansion step: a pure-data registry the UI will surface when a user picks a country, so they don't miss upcoming rule shifts.
+   135→- Re-read src/lib/countries.ts (6 supported ISOs: GB, US, CA, AU, DE, AE; authority shortNames: UKVI, USCIS, IRCC, Home Affairs, BAMF, ICP) and src/lib/visa-categories.ts (6 category ids: skilled_worker, student, visitor, family, business, investor) so every announcement's countryIso / categoryId / authorityName references real entries already in the project.
+   136→- Re-read tsconfig.json — strict mode on, ES2017 target, bundler moduleResolution, `@/*` path alias present but unused in this pure-data module (no imports at all).
+   137→- Authored src/lib/announcements.ts exporting: `AnnouncementStatus` union (`consultation | proposed | announced | deferred | effective_soon`), `Announcement` interface (id, countryIso, categoryId, title{en,ur,bn}, summary{en,ur,bn}, status, statusLabel{en,ur,bn}, authorityName, publishedAt ISO, expectedEffectiveAt ISO, sourceUrl https, impactLevel low|medium|high), `ANNOUNCEMENTS: Announcement[]` (12 entries — 2 per country × 6 countries), and four helpers: `announcementsForCountry(iso)`, `announcementsForCategory(countryIso, categoryId)`, `upcomingAnnouncements(withinDays)`, `getAnnouncementById(id)`.
+   138→- Wrote all 12 entries spanning every supported ISO (GB/US/CA/AU/DE/AE) and matching every spec'd realistic announcement idea verbatim: US student H-1B cap consultation (USCIS, high, effective 2026-04-01), US skilled_worker H-1B wage-based selection (USCIS, high, 2026-01-01), GB student Graduate route review (UKVI, high, 2026-09-01), GB skilled_worker salary threshold review (UKVI, medium, 2026-04-01), CA skilled_worker Express Entry STEM expansion (IRCC, medium, 2026-03-15), CA student attestation letter (IRCC, high, 2026-01-01), AU skilled_worker subclass 482 PR pathway (Home Affairs, high, 2026-07-01), AU student Genuine Student requirement (Home Affairs, high, 2026-01-01), DE skilled_worker Chancenkarte expansion (BAMF, medium, 2026-06-01), DE visitor ETIAS-style pilot (BAMF, low, 2026-10-01), AE skilled_worker Green Visa expansion (ICP, medium, 2026-03-01), AE visitor 5-year multi-entry tourist visa (ICP, low, 2026-02-01).
+   139→- Localized every title + summary to en/ur/bn (3 sentences max per summary, matching the project's i18n LANG_META contract). Status labels use the EXACT spec translations inlined per announcement (consultation: "Consultation open" / "مشاورت جاری" / "পরামর্শ চলছে"; proposed: "Proposed" / "تجویز کردہ" / "প্রস্তাবিত"; announced: "Announced" / "اعلان کردہ" / "ঘোষিত"; deferred: "Deferred" / "ملتوی" / "স্থগিত"; effective_soon: "Effective soon" / "جلد نافذ" / "শীঘ্রই কার্যকর"). Caught and fixed a শ/ষ character typo I introduced on one entry before saving.
+   140→- All dates are ISO strings ending in `Z` (UTC midnight). publishedAt always <= expectedEffectiveAt for every entry (sanity-checked). sourceUrl is always https and points at the official regulator landing page (USCIS / gov.uk / canada.ca / immi.homeaffairs.gov.au / bamf.de / icp.gov.ae). authorityName uses the same shortName strings countries.ts already publishes (USCIS, UKVI, IRCC, Home Affairs, BAMF, ICP) so the UI badge component doesn't need a parallel lookup.
+   141→- Helper semantics: `announcementsForCountry(iso)` is case-insensitive + whitespace-tolerant (trims + uppercases). `announcementsForCategory(countryIso, categoryId)` is case-insensitive on BOTH args (uppercase iso, lowercase category). `upcomingAnnouncements(withinDays)` uses absolute distance `Math.abs(Date.parse(expectedEffectiveAt) - Date.now()) <= withinDays * 86400000` — surfaces both upcoming and recently-effective entries within the window (so a user can still see "this just took effect last week" as a relevant shift). Negative `withinDays` is clamped to 0. Invalid (NaN) dates are filtered out defensively. `getAnnouncementById(id)` is an exact-match lookup.
+   142→- Top-of-file comment block verbatim per spec: "VisaCheck announcements — pending rule changes per country. // Pure data. No I/O. The UI surfaces these for the user's selected country so they don't miss upcoming shifts."
+   143→- Module constraints honored: zero imports (no React, no Next, no storage, no console.log, no localStorage), private `DAY_MS` const for the day-in-ms conversion, strict-mode typed throughout, every interface field JSDoc'd.
+   144→- Type-checked with `bunx tsc --noEmit` — zero errors in src/lib/announcements.ts (the only 5 reported project errors are pre-existing in unrelated files: examples/websocket, skills/image-edit, skills/stock-analysis-skill, src/components/visa-check/results.tsx — same findings as g1/g2).
+   145→- Linted with `bunx eslint src/lib/announcements.ts` — clean, 0 errors / 0 warnings.
+   146→- Ran a runtime smoke test (339 assertions, temp file deleted after pass) covering: count==12, all 6 country ISOs present, id uniqueness, ISO format (2-char uppercase), categoryId in known set, all 3 langs non-empty on title/summary/statusLabel, every statusLabel en/ur/bn byte-equal to spec translation, ISO date parseability, https prefix on sourceUrl, impactLevel enum validity, publishedAt <= expectedEffectiveAt for every entry, helper case-insensitivity + trim, helper empty-string / unknown-iso returns [], announcementsForCategory cross-product counts (12 exact pairs all =1), withinDays boundary behavior (system clock == 2026-10-01T~08Z per spec, so today's DE visitor item returns within 1 day; GB graduate ~30.3 days back returns within 31 but not 30), withinDays 0 returns empty (no item is effective at the exact ms of now), withinDays 400 returns all 12, negative withinDays treated as 0, getAnnouncementById exact-match + unknown + empty-string, impact distribution (>=2 high, >=2 medium, >=1 low), status distribution (all 4 used statuses present), authorityName ∈ {USCIS, UKVI, IRCC, Home Affairs, BAMF, ICP}, countryIso ∈ {GB, US, CA, AU, DE, AE}. 339/339 passed.
+   147→- Appended this section to worklog.md in append mode (existing content untouched).
+   148→
+   149→Stage Summary:
+   150→- New module src/lib/announcements.ts is a strict-mode pure-data registry, no imports (no React/Next), no I/O, no storage, no console.
+   151→- 12 announcements exported via ANNOUNCEMENTS (2 per country × 6 countries) with full en/ur/bn localization on title, summary, and statusLabel; exact spec status label translations inlined per entry; ISO dates throughout; https source URLs; impactLevel distribution spans low/medium/high; status distribution spans consultation/proposed/announced/effective_soon (deferred enum value present for completeness).
+   152→- Four helpers exported: announcementsForCountry(iso), announcementsForCategory(countryIso, categoryId), upcomingAnnouncements(withinDays), getAnnouncementById(id). Country/category lookups are case-insensitive + whitespace-tolerant; upcomingAnnouncements uses absolute time distance so recently-effective entries are surfaced alongside upcoming ones.
+   153→- Verified: `bunx tsc --noEmit` 0 errors on announcements.ts; `bunx eslint src/lib/announcements.ts` 0 errors/0 warnings; runtime smoke test 339/339 pass.
+   154→- Ready to be consumed by the next UI step: when a user picks a country + category in the wizard, the results page can render `announcementsForCountry(iso)` and `announcementsForCategory(iso, categoryId)` panels above/beside the live rule checks, with `upcomingAnnouncements(60)` powering a "changes coming up in the next 60 days" cross-country banner.
+   155→
+   156→---
+   157→Task ID: g1-g17 (global expansion)
+   158→Agent: main (Z.ai Code)
+   159→Task: Expand VisaCheck from UK-only Skilled Worker to a global, multi-country, multi-category visa rule platform with auto-updating announcements and date/time awareness. User said: "we are building for every visa category or every country not just for uk not only for skilled for everything".
+   160→
+   161→Work Log:
+   162→- Read user's pasted master build prompt (Pasted Content_1790840249842.txt) to confirm the broader vision.
+   163→- Launched 3 parallel subagents (Task IDs g1, g2, g4) for independent data modules:
+   164→  - g1: countries.ts — 6 destination countries (GB, US, CA, AU, DE, AE) with localized names, authorities (UKVI/USCIS/IRCC/Home Affairs/BAMF/ICP), currencies, timezones, popular routes.
+   165→  - g2: visa-categories.ts — 6 visa categories (skilled_worker, student, visitor, family, business, investor) with localized names/descriptions, durations, sponsorship/financial-proof flags.
+   166→  - g4: announcements.ts — 12 pending rule changes across all 6 countries, with localized titles/summaries, status (consultation/proposed/announced/effective_soon), expectedEffectiveAt, sourceUrl, authority, impact level.
+   167→- Rewrote rules-data.ts to support multi-country multi-category rules. Now 30+ rules across 6 countries × 5 categories, each with authority, lastUpdated, effectiveFrom, proposedChange metadata. Every rule still ships with PENDING_HUMAN_CLICK marker (gate intact).
+   168→- Updated rules-engine.ts: filter by countryIso + categoryId, apply date validity (effectiveFrom/validTo vs today), return authority + dates + proposedChange in each evaluated rule.
+   169→- Updated POST /api/check: accepts countryIso + categoryId, validates country via getCountry(), returns evaluated rules with full authority/date/proposedChange context.
+   170→- New GET /api/announcements: country-filtered, auto-refreshing endpoint (max-age=300), returns announcements with authority metadata.
+   171→- New GET /api/countries: read-only list of supported countries, cached 1 hour.
+   172→- Expanded i18n with ~40 new strings per language (en/ur/bn): country names, category names, authority labels, announcement strings, date labels, today/as-of/last-updated/effective-from, auto-refresh messaging.
+   173→- Built 4 new components:
+   174→  - pickers.tsx — CountryPicker (searchable flag grid with authority badges), CategoryPicker (6 visa categories with icons + descriptions + duration badges), DestinationPicker (combined step 0).
+   175→  - announcements-feed.tsx — auto-refreshing announcements card (5-min interval + visibility-change refetch), status badges with icons, expected-effective countdown, source links, aria-live region, offline-friendly cache fallback.
+   176→  - today-header.tsx — sticky bar showing today's date (localized), destination country's timezone time, auto-refresh indicator. Ticks every minute.
+   177→- Refactored Home: now shows hero with 6 country flags, country picker card, category picker card (appears after country selected), Start CTA gated on both selections, announcements feed preview (limit 3), honesty notes, how-it-works.
+   178→- Refactored Wizard: step 0 is now DestinationPicker (country + category), steps 1-6 adapt per category. Header context bar shows selected country flag + name + category icon + authority shortName + change-country button.
+   179→- Refactored Results: shows destination country flag + authority card (with "Verify on official site" link), per-rule authority + lastUpdated + effectiveFrom dates, proposedChange banner (amber-styled) when a rule has a pending change, announcements feed at bottom.
+   180→- Wired TodayHeader into the app shell (between Header and main content).
+   181→- Updated manifest.webmanifest for global scope (name, description, screenshot labels).
+   182→- Updated sw.js: bumped to v2, added explicit /api/* pass-through (never cached by SW) — strict shell-only interpretation. Old v1 cache evicted on activate.
+   183→- Ran lint: 0 errors, 0 warnings.
+   184→- agent-browser verification: home renders 6 countries with flags/authorities, picking US + Student shows announcements feed automatically ("H-1B cap reform consultation", "H-1B wage-based selection"), wizard context bar shows "🇺🇸 United States · 🎓 Student · USCIS", results page shows USCIS authority card + 2 rules + announcements.
+   185→- SW cache audit: visacheck-shell-v2 with 5 entries, hasApi:false — store-nothing holds.
+   186→- localStorage audit: only vcLang + vcUsedOnce — PECR-minimal holds.
+   187→
+   188→Stage Summary:
+   189→- ✅ Global scope: 6 countries × 6 visa categories × 30+ rules, each with official authority (UKVI/USCIS/IRCC/Home Affairs/BAMF/ICP)
+   190→- ✅ Auto-updating announcements: 12 pending rule changes with status (consultation/proposed/announced/effective_soon), expectedEffectiveAt dates, source URLs, impact levels
+   191→- ✅ Date/time awareness: TodayHeader shows today's date + destination timezone, results show lastUpdated + effectiveFrom per rule, "As of: 1 Oct 2026" framing
+   192→- ✅ Authority field: every rule and every announcement links to its official authority with a "Verify on official site" CTA
+   193→- ✅ Auto-refresh: announcements endpoint refetches every 5 minutes + on tab focus; visible to user via the refresh indicator
+   194→- ✅ Store-nothing holds: SW cache has 0 /api/ entries, localStorage has only vcLang/vcTheme/vcUsedOnce
+   195→- ✅ PENDING_HUMAN_CLICK gate unchanged: every rule still ships with the marker, all displayed verdicts are "pending"
+   196→- ✅ RTL support: Urdu layout still works (auto-applies dir="rtl")
+   197→- ✅ Accessibility: skip link, focus rings, aria-live on announcements, keyboard-dismissable install banner
+   198→
+   199→Manual sign-off tasks (still pending):
+   200→1. Native-speaker review of Urdu + Bengali translations of the 40+ new global strings (AI-drafted).
+   201→2. Lawyer glance at disclaimers (now mentions multiple authorities).
+   202→3. Lighthouse PWA audit on deployed URL.
+   203→4. Verify each country's rules against the live authority website (UKVI/USCIS/IRCC/Home Affairs/BAMF/ICP) — currently all rules are PENDING_HUMAN_CLICK by design.
+   204→
+   205→Next-phase opportunities:
+   206→- Add more countries (Singapore, New Zealand, Ireland, France, Netherlands, Saudi Arabia).
+   207→- Add more visa categories (transit, working holiday, retirement, digital nomad).
+   208→- Per-category dynamic form fields (currently all categories use the same 6-step form; some fields are simply N/A for non-applicable categories).
+   209→- Wire a real "research relay" that auto-fetches rule changes from official RSS feeds / press release pages.
+   210→- Deep-link share URLs with country+category encoded in the fragment (no user data stored).
+   211→- Print-optimized results stylesheet.
+   212→

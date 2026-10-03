@@ -1,0 +1,1476 @@
+     1→// VisaCheck global rules data — multi-country, multi-category published-rule data
+     2→// with PENDING_HUMAN_CLICK markers, official authorities, lastUpdated / effectiveFrom dates,
+     3→// and proposed-change metadata.
+     4→//
+     5→// STORE-NOTHING: this module is pure data, no I/O. Used by the in-memory rules engine only.
+     6→// Add new rules by appending to RULES. Every rule MUST ship with `status: "PENDING_HUMAN_CLICK"`
+     7→// until a human clicks through the official authority's published page and pastes verbatim wording.
+     8→
+     9→import type { Lang } from '@/lib/i18n';
+    10→
+    11→export type RuleCategory = 'skilled_worker' | 'student' | 'visitor' | 'family' | 'business' | 'investor';
+    12→
+    13→export interface RuleAuthority {
+    14→  shortName: string;          // e.g. "UKVI", "USCIS", "IRCC", "Home Affairs", "BAMF", "ICP"
+    15→  officialName: string;       // e.g. "UK Visas and Immigration"
+    16→  url: string;                // https URL to the official guidance
+    17→}
+    18→
+    19→export interface ProposedChange {
+    20→  status: 'consultation' | 'proposed' | 'announced' | 'deferred';
+    21→  summary: string;            // human-readable description of the upcoming change
+    22→  expectedEffectiveAt: string; // ISO date string
+    23→  sourceUrl: string;           // link to the announcement
+    24→}
+    25→
+    26→export interface Rule {
+    27→  id: string;                  // unique within (countryIso, category)
+    28→  countryIso: string;          // "GB" | "US" | "CA" | "AU" | "DE" | "AE"
+    29→  category: RuleCategory;
+    30→  // The status marker — gate is: JSON.stringify(rule).includes('PENDING_HUMAN_CLICK')
+    31→  status: 'PENDING_HUMAN_CLICK';
+    32→  authority: RuleAuthority;
+    33→  lastUpdated: string;         // ISO date the rule data was last reviewed
+    34→  effectiveFrom: string;       // ISO date the rule became effective
+    35→  validTo?: string | null;     // ISO date the rule expires (null = open-ended)
+    36→  title: { en: string; ur: string; bn: string };
+    37→  summary: { en: string; ur: string; bn: string };
+    38→  source: string;              // https URL to the official published rule
+    39→  proposedChange?: ProposedChange;
+    40→  // Pure logical evaluator. Result is masked by the gate — if status is PENDING_HUMAN_CLICK,
+    41→  // the user always sees "pending" (the safe "being verified" state).
+    42→  applies: (a: Answers) => boolean;
+    43→  evaluate: (a: Answers) => 'pass' | 'fail' | 'na';
+    44→}
+    45→
+    46→export interface Answers {
+    47→  nationality: string;            // ISO country name
+    48→  applyingFromOutsideUK: boolean;
+    49→  jobTitle: string;
+    50→  socCode: string;
+    51→  salary: number;                 // gross annual, in destination currency
+    52→  hasCos: boolean;                // certificate of sponsorship / job offer
+    53→  sponsorLicensed: 'yes' | 'unsure' | 'no';
+    54→  newEntrant: boolean;
+    55→  englishMet: boolean;
+    56→  fundsMet: boolean;
+    57→  ihsAware: boolean;
+    58→  criminalCert: boolean;
+    59→  passportValid: boolean;
+    60→  // Extended for other visa categories
+    61→  admissionOffer: boolean;        // student: has school admission
+    62→  studyFundsMet: boolean;         // student: tuition + living funds
+    63→  relationshipProof: boolean;     // family: proof of relationship to settled person
+    64→  sponsorIncomeMet: boolean;      // family: sponsor meets income threshold
+    65→  businessPlan: boolean;          // business/investor: has business plan
+    66→  investmentAmount: number;       // investor: capital to invest (in destination currency)
+    67→  visitPurposeValid: boolean;     // visitor: stated purpose allowed
+    68→  returnTicket: boolean;          // visitor: has return/onward ticket
+    69→  healthInsurance: boolean;        // visitor: has travel insurance
+    70→}
+    71→
+    72→// English-exempt nationalities (commonly listed majorities).
+    73→const ENGLISH_EXEMPT = new Set([
+    74→  'Antigua and Barbuda', 'Australia', 'The Bahamas', 'Barbados', 'Belize',
+    75→  'Canada', 'Dominica', 'Grenada', 'Guyana', 'Ireland', 'Jamaica',
+    76→  'Malta', 'New Zealand', 'St Kitts and Nevis', 'St Lucia',
+    77→  'St Vincent and the Grenadines', 'Trinidad and Tobago', 'USA', 'Singapore',
+    78→  'United Kingdom',
+    79→]);
+    80→
+    81→// TB test countries.
+    82→const TB_TEST_COUNTRIES = new Set([
+    83→  'Afghanistan', 'Bangladesh', 'Brazil', 'China', 'Egypt', 'Ghana', 'India',
+    84→  'Indonesia', 'Iran', 'Iraq', 'Nigeria', 'Pakistan', 'Philippines', 'Sri Lanka',
+    85→  'South Africa', 'Sudan', 'Thailand', 'Uzbekistan', 'Vietnam',
+    86→]);
+    87→
+    88→// UK thresholds
+    89→const UK_GENERAL_THRESHOLD = 38700;
+    90→const UK_NEW_ENTRANT_THRESHOLD = 30960;
+    91→
+    92→// US H-1B prevailing wage (Level 1, approx median)
+    93→const US_H1B_LEVEL_1 = 60000;
+    94→
+    95→// Canada Express Entry minimum CRS (illustrative)
+    96→const CA_CRIS_MIN = 67;
+    97→
+    98→// Australia TSS visa minimum salary (TSMIT)
+    99→const AU_TSMIT = 73150;
+   100→
+   101→// Germany EU Blue Card minimum salary
+   102→const DE_BLUE_CARD = 45300;
+   103→
+   104→// UAE minimum salary for work visa
+   105→const AE_WORK_MIN = 4000;
+   106→
+   107→// US F-1 student funds (illustrative I-20 amount)
+   108→const US_F1_FUNDS = 30000;
+   109→
+   110→// Canada study permit funds
+   111→const CA_STUDY_FUNDS = 20635;
+   112→
+   113→// Australia student funds
+   114→const AU_STUDENT_FUNDS = 24505;
+   115→
+   116→// Germany blocked account for students
+   117→const DE_BLOCKED = 11208;
+   118→
+   119→// UAE student funds
+   120→const AE_STUDENT_FUNDS = 15000;
+   121→
+   122→// UK visitor funds (illustrative)
+   123→const UK_VISITOR_FUNDS = 1500;
+   124→
+   125→// Family sponsor income thresholds
+   126→const UK_FAMILY_INCOME = 29000;
+   127→const US_FAMILY_INCOME = 22710;  // 125% of poverty line for 2-person household
+   128→
+   129→// Investor amounts
+   130→const US_E5_INVEST = 500000;     // EB-5 TEA
+   131→const CA_INVEST = 200000;        // Start-up visa minimum
+   132→const AU_BIIP_INVEST = 2500000;  // Significant Investor visa
+   133→const AE_INVEST = 2000000;      // Investor visa
+   134→const DE_INVEST = 360000;        // Self-employment
+   135→
+   136→const nowIso = () => new Date().toISOString();
+   137→const today = '2025-10-01T00:00:00Z';
+   138→
+   139→export const RULES: Rule[] = [
+   140→  // =====================================================
+   141→  // UNITED KINGDOM — SKILLED WORKER
+   142→  // =====================================================
+   143→  {
+   144→    id: 'gb-sw-cos',
+   145→    countryIso: 'GB',
+   146→    category: 'skilled_worker',
+   147→    status: 'PENDING_HUMAN_CLICK',
+   148→    authority: {
+   149→      shortName: 'UKVI',
+   150→      officialName: 'UK Visas and Immigration',
+   151→      url: 'https://www.gov.uk/skilled-worker-visa',
+   152→    },
+   153→    lastUpdated: today,
+   154→    effectiveFrom: '2024-04-11T00:00:00Z',
+   155→    validTo: null,
+   156→    title: {
+   157→      en: 'Certificate of Sponsorship',
+   158→      ur: 'اسپانسرشپ کا سرٹیفکیٹ',
+   159→      bn: 'স্পন্সরশিপ সার্টিফিকেট',
+   160→    },
+   161→    summary: {
+   162→      en: 'You must hold a valid Certificate of Sponsorship (CoS) issued by a UK sponsor that holds a Skilled Worker sponsor licence.',
+   163→      ur: 'آپ کے پاس ایک درست Certificate of Sponsorship (CoS) ہونا چاہیے جو برطانوی اسپانسر نے جاری کیا ہو جس کے پاس Skilled Worker اسپانسر لائسنس ہے۔',
+   164→      bn: 'আপনার একটি বৈধ Certificate of Sponsorship (CoS) থাকতে হবে যা যুক্তরাজ্যের একজন স্পন্সর দ্বারা প্রদান করা হয়েছে যার কাছে স্কিলড ওয়ার্কার স্পন্সর লাইসেন্স আছে।',
+   165→    },
+   166→    source: 'https://www.gov.uk/skilled-worker-visa/your-job',
+   167→    proposedChange: {
+   168→      status: 'proposed',
+   169→      summary: 'UKVI is reviewing salary thresholds for shortage occupations; reductions possible April 2026.',
+   170→      expectedEffectiveAt: '2026-04-01T00:00:00Z',
+   171→      sourceUrl: 'https://www.gov.uk/government/publications/skilled-worker-visa-eligible-occupations-and-codes',
+   172→    },
+   173→    applies: () => true,
+   174→    evaluate: (a) => (a.hasCos ? 'pass' : 'fail'),
+   175→  },
+   176→  {
+   177→    id: 'gb-sw-salary',
+   178→    countryIso: 'GB',
+   179→    category: 'skilled_worker',
+   180→    status: 'PENDING_HUMAN_CLICK',
+   181→    authority: { shortName: 'UKVI', officialName: 'UK Visas and Immigration', url: 'https://www.gov.uk/skilled-worker-visa' },
+   182→    lastUpdated: today,
+   183→    effectiveFrom: '2024-04-11T00:00:00Z',
+   184→    validTo: null,
+   185→    title: {
+   186→      en: 'Salary — general threshold',
+   187→      ur: 'تنخواہ — عمومی حد',
+   188→      bn: 'বেতন — সাধারণ সীমা',
+   189→    },
+   190→    summary: {
+   191→      en: `Your salary must meet or exceed the general threshold (£${UK_GENERAL_THRESHOLD.toLocaleString()} gross per year), or the going rate for your SOC code — whichever is higher.`,
+   192→      ur: `آپ کی تنخواہ عمومی حد (£${UK_GENERAL_THRESHOLD.toLocaleString()} سالانہ مجموعی) یا آپ کے SOC کوڈ کے حساب سے جو بھی زیادہ ہو، کو پورا کرنی چاہیے۔`,
+   193→      bn: `আপনার বেতন অবশ্যই সাধারণ সীমা (£${UK_GENERAL_THRESHOLD.toLocaleString()} বার্ষিক স্থূল) বা SOC কোড অনুযায়ী যেটি বেশি তা পূরণ করতে হবে।`,
+   194→    },
+   195→    source: 'https://www.gov.uk/skilled-worker-visa/your-job',
+   196→    applies: () => true,
+   197→    evaluate: (a) => {
+   198→      const threshold = a.newEntrant ? UK_NEW_ENTRANT_THRESHOLD : UK_GENERAL_THRESHOLD;
+   199→      return a.salary >= threshold ? 'pass' : 'fail';
+   200→    },
+   201→  },
+   202→  {
+   203→    id: 'gb-sw-english',
+   204→    countryIso: 'GB',
+   205→    category: 'skilled_worker',
+   206→    status: 'PENDING_HUMAN_CLICK',
+   207→    authority: { shortName: 'UKVI', officialName: 'UK Visas and Immigration', url: 'https://www.gov.uk/skilled-worker-visa' },
+   208→    lastUpdated: today,
+   209→    effectiveFrom: '2024-04-11T00:00:00Z',
+   210→    validTo: null,
+   211→    title: {
+   212→      en: 'English language — CEFR B1',
+   213→      ur: 'انگریزی زبان — CEFR B1',
+   214→      bn: 'ইংরেজি ভাষা — CEFR B1',
+   215→    },
+   216→    summary: {
+   217→      en: 'You must demonstrate English at CEFR B1 level in reading, writing, listening and speaking.',
+   218→      ur: 'آپ کو پڑھنے، لکھنے، سننے اور بولنے میں CEFR B1 لیول کی انگریزی ظاہر کرنی ہوگی।',
+   219→      bn: 'আপনাকে পড়তে, লিখতে, শুনতে এবং বলতে CEFR B1 স্তরে ইংরেজি প্রদর্শন করতে হবে।',
+   220→    },
+   221→    source: 'https://www.gov.uk/skilled-worker-visa/knowledge-of-english',
+   222→    applies: () => true,
+   223→    evaluate: (a) => (a.englishMet || ENGLISH_EXEMPT.has(a.nationality) ? 'pass' : 'fail'),
+   224→  },
+   225→  {
+   226→    id: 'gb-sw-funds',
+   227→    countryIso: 'GB',
+   228→    category: 'skilled_worker',
+   229→    status: 'PENDING_HUMAN_CLICK',
+   230→    authority: { shortName: 'UKVI', officialName: 'UK Visas and Immigration', url: 'https://www.gov.uk/skilled-worker-visa' },
+   231→    lastUpdated: today,
+   232→    effectiveFrom: '2024-04-11T00:00:00Z',
+   233→    validTo: null,
+   234→    title: {
+   235→      en: 'Maintenance funds — £1,270 for 28 days',
+   236→      ur: 'زرخیز فنڈز — 28 دن کے لیے £1,270',
+   237→      bn: 'রক্ষণাবেক্ষণ তহবিল — ২৮ দিনের জন্য £1,270',
+   238→    },
+   239→    summary: {
+   240→      en: 'You must show £1,270 held continuously for 28 days unless your sponsor has certified your maintenance on the CoS.',
+   241→      ur: 'آپ کو 28 دن کے لیے مسلسل £1,270 دکھانا ہوگا جب تک آپ کے اسپانسر نے CoS پر آپ کے زرخیز کی توثیق نہ کی ہو۔',
+   242→      bn: 'আপনাকে ২৮ দিনের জন্য ধারাবাহিকভাবে £1,270 দেখাতে হবে যদি না আপনার স্পন্সর আপনার রক্ষণাবেক্ষণ CoS-এ প্রত্যয়ন করে।',
+   243→    },
+   244→    source: 'https://www.gov.uk/skilled-worker-visa/how-much-it-costs',
+   245→    applies: () => true,
+   246→    evaluate: (a) => (a.fundsMet ? 'pass' : 'fail'),
+   247→  },
+   248→
+   249→  // =====================================================
+   250→  // UNITED KINGDOM — STUDENT
+   251→  // =====================================================
+   252→  {
+   253→    id: 'gb-st-cas',
+   254→    countryIso: 'GB',
+   255→    category: 'student',
+   256→    status: 'PENDING_HUMAN_CLICK',
+   257→    authority: { shortName: 'UKVI', officialName: 'UK Visas and Immigration', url: 'https://www.gov.uk/student-visa' },
+   258→    lastUpdated: today,
+   259→    effectiveFrom: '2024-01-01T00:00:00Z',
+   260→    validTo: null,
+   261→    title: {
+   262→      en: 'Confirmation of Acceptance for Studies (CAS)',
+   263→      ur: 'تعلیم کے لیے قبولیت کی تصدیق (CAS)',
+   264→      bn: 'অধ্যয়নের জন্য গ্রহণের নিশ্চিতকরণ (CAS)',
+   265→    },
+   266→    summary: {
+   267→      en: 'You must have a Confirmation of Acceptance for Studies (CAS) from a licensed student sponsor before applying.',
+   268→      ur: 'درخواست سے پہلے آپ کے پاس لائسنس یافتہ اسٹوڈنٹ اسپانسر سے Confirmation of Acceptance for Studies (CAS) ہونا چاہیے۔',
+   269→      bn: 'আবেদন করার আগে আপনার একটি লাইসেন্সপ্রাপ্ত ছাত্র স্পন্সরের কাছ থেকে Confirmation of Acceptance for Studies (CAS) থাকতে হবে।',
+   270→    },
+   271→    source: 'https://www.gov.uk/student-visa',
+   272→    proposedChange: {
+   273→      status: 'consultation',
+   274→      summary: 'UK Home Office is reviewing the Graduate route (2-year post-study visa); possible duration reduction September 2026.',
+   275→      expectedEffectiveAt: '2026-09-01T00:00:00Z',
+   276→      sourceUrl: 'https://www.gov.uk/government/consultations',
+   277→    },
+   278→    applies: () => true,
+   279→    evaluate: (a) => (a.admissionOffer ? 'pass' : 'fail'),
+   280→  },
+   281→  {
+   282→    id: 'gb-st-funds',
+   283→    countryIso: 'GB',
+   284→    category: 'student',
+   285→    status: 'PENDING_HUMAN_CLICK',
+   286→    authority: { shortName: 'UKVI', officialName: 'UK Visas and Immigration', url: 'https://www.gov.uk/student-visa' },
+   287→    lastUpdated: today,
+   288→    effectiveFrom: '2024-01-01T00:00:00Z',
+   289→    validTo: null,
+   290→    title: {
+   291→      en: 'Course fees + living funds',
+   292→      ur: 'کورس فیس + زرخیز فنڈز',
+   293→      bn: 'কোর্স ফি + জীবনযাত্রার তহবিল',
+   294→    },
+   295→    summary: {
+   296→      en: 'You must show funds to cover your course fees plus £1,334/month (London) or £1,023/month (outside London) for up to 9 months.',
+   297→      ur: 'آپ کو اپنے کورس کی فیس کے ساتھ £1,334/ماہ (لندن) یا £1,023/ماہ (لندن سے باہر) 9 ماہ تک دکھانا ہوگا۔',
+   298→      bn: 'আপনাকে আপনার কোর্স ফি এবং £1,334/মাস (লন্ডন) বা £1,023/মাস (লন্ডনের বাইরে) ৯ মাস পর্যন্ত দেখাতে হবে।',
+   299→    },
+   300→    source: 'https://www.gov.uk/student-visa/money',
+   301→    applies: () => true,
+   302→    evaluate: (a) => (a.studyFundsMet ? 'pass' : 'fail'),
+   303→  },
+   304→  {
+   305→    id: 'gb-st-english',
+   306→    countryIso: 'GB',
+   307→    category: 'student',
+   308→    status: 'PENDING_HUMAN_CLICK',
+   309→    authority: { shortName: 'UKVI', officialName: 'UK Visas and Immigration', url: 'https://www.gov.uk/student-visa' },
+   310→    lastUpdated: today,
+   311→    effectiveFrom: '2024-01-01T00:00:00Z',
+   312→    validTo: null,
+   313→    title: {
+   314→      en: 'English — CEFR B2 (degree level)',
+   315→      ur: 'انگریزی — CEFR B2 (ڈگری لیول)',
+   316→      bn: 'ইংরেজি — CEFR B2 (ডিগ্রি স্তর)',
+   317→    },
+   318→    summary: {
+   319→      en: 'For degree-level study: CEFR B2. For below-degree: CEFR B1. Accepted tests include IELTS for UKVI and PTE Academic UKVI.',
+   320→      ur: 'ڈگری لیول تعلیم کے لیے: CEFR B2۔ ڈگری سے نیچے کے لیے: CEFR B1۔ منظور شدہ ٹیسٹس میں IELTS for UKVI اور PTE Academic UKVI شامل ہیں।',
+   321→      bn: 'ডিগ্রি-স্তরের অধ্যয়নের জন্য: CEFR B2। ডিগ্রির নিচের জন্য: CEFR B1। গৃহীত পরীক্ষায় IELTS for UKVI এবং PTE Academic UKVI অন্তর্ভুক্ত।',
+   322→    },
+   323→    source: 'https://www.gov.uk/student-visa/knowledge-of-english',
+   324→    applies: () => true,
+   325→    evaluate: (a) => (a.englishMet || ENGLISH_EXEMPT.has(a.nationality) ? 'pass' : 'fail'),
+   326→  },
+   327→
+   328→  // =====================================================
+   329→  // UNITED KINGDOM — VISITOR
+   330→  // =====================================================
+   331→  {
+   332→    id: 'gb-vs-purpose',
+   333→    countryIso: 'GB',
+   334→    category: 'visitor',
+   335→    status: 'PENDING_HUMAN_CLICK',
+   336→    authority: { shortName: 'UKVI', officialName: 'UK Visas and Immigration', url: 'https://www.gov.uk/standard-visitor' },
+   337→    lastUpdated: today,
+   338→    effectiveFrom: '2024-01-01T00:00:00Z',
+   339→    validTo: null,
+   340→    title: {
+   341→      en: 'Permitted visit purpose',
+   342→      ur: 'اجازت شدہ دورے کا مقصد',
+   343→      bn: 'অনুমোদিত সফরের উদ্দেশ্য',
+   344→    },
+   345→    summary: {
+   346→      en: 'You may visit for tourism, business meetings, short study, medical treatment, or family. No work or access to public funds.',
+   347→      ur: 'آپ سیاحت، کاروباری میٹنگز، مختصر تعلیم، علاج، یا خاندان کے لیے دورہ کر سکتے ہیں۔ کام یا پبلک فنڈز تک رسائی نہیں۔',
+   348→      bn: 'আপনি পর্যটন, ব্যবসায়িক সাক্ষাৎকার, সংক্ষিপ্ত অধ্যয়ন, চিকিৎসা বা পরিবারের জন্য ভ্রমণ করতে পারেন। কাজ বা পাবলিক ফান্ডে অ্যাক্সেস নেই।',
+   349→    },
+   350→    source: 'https://www.gov.uk/standard-visitor',
+   351→    applies: () => true,
+   352→    evaluate: (a) => (a.visitPurposeValid ? 'pass' : 'fail'),
+   353→  },
+   354→  {
+   355→    id: 'gb-vs-funds',
+   356→    countryIso: 'GB',
+   357→    category: 'visitor',
+   358→    status: 'PENDING_HUMAN_CLICK',
+   359→    authority: { shortName: 'UKVI', officialName: 'UK Visas and Immigration', url: 'https://www.gov.uk/standard-visitor' },
+   360→    lastUpdated: today,
+   361→    effectiveFrom: '2024-01-01T00:00:00Z',
+   362→    validTo: null,
+   363→    title: {
+   364→      en: 'Sufficient funds for stay',
+   365→      ur: 'قیام کے لیے کافی فنڈز',
+   366→      bn: 'অবস্থানের জন্য পর্যাপ্ত তহবিল',
+   367→    },
+   368→    summary: {
+   369→      en: `You must show sufficient funds to cover your stay, typically at least £${UK_VISITOR_FUNDS.toLocaleString()} for a short visit, plus accommodation.`,
+   370→      ur: `آپ کو اپنے قیام کے لیے کافی فنڈز دکھانے ہوں گے، عام طور پر مختصر دورے کے لیے کم از کم £${UK_VISITOR_FUNDS.toLocaleString()}، ساتھ رہائش۔`,
+   371→      bn: `আপনাকে আপনার অবস্থানের জন্য পর্যাপ্ত তহবিল দেখাতে হবে, সাধারণত সংক্ষিপ্ত সফরের জন্য কমপক্ষে £${UK_VISITOR_FUNDS.toLocaleString()}, পাশাপাশি থাকার ব্যবস্থা।`,
+   372→    },
+   373→    source: 'https://www.gov.uk/standard-visitor',
+   374→    applies: () => true,
+   375→    evaluate: (a) => (a.fundsMet ? 'pass' : 'fail'),
+   376→  },
+   377→
+   378→  // =====================================================
+   379→  // UNITED KINGDOM — FAMILY
+   380→  // =====================================================
+   381→  {
+   382→    id: 'gb-fm-relationship',
+   383→    countryIso: 'GB',
+   384→    category: 'family',
+   385→    status: 'PENDING_HUMAN_CLICK',
+   386→    authority: { shortName: 'UKVI', officialName: 'UK Visas and Immigration', url: 'https://www.gov.uk/uk-family-visas' },
+   387→    lastUpdated: today,
+   388→    effectiveFrom: '2024-01-01T00:00:00Z',
+   389→    validTo: null,
+   390→    title: {
+   391→      en: 'Proof of relationship',
+   392→      ur: 'رشتے کا ثبوت',
+   393→      bn: 'সম্পর্কের প্রমাণ',
+   394→    },
+   395→    summary: {
+   396→      en: 'You must provide proof of relationship to a settled partner, parent, or child in the UK (marriage certificate, birth certificate, etc.).',
+   397→      ur: 'آپ کو برطانیہ میں ایک مستقل شراکت دار، والد، یا بچے سے رشتے کا ثبوت فراہم کرنا ہوگا (شادی کا سرٹیفکیٹ، پیدائش کا سرٹیفکیٹ، وغیرہ)۔',
+   398→      bn: 'যুক্তরাজ্যে একজন বসতি স্থাপিত পার্টনার, পিতা-মাতা বা সন্তানের সাথে সম্পর্কের প্রমাণ দিতে হবে (বিবাহ সনদ, জন্ম সনদ ইত্যাদি)।',
+   399→    },
+   400→    source: 'https://www.gov.uk/uk-family-visas',
+   401→    applies: () => true,
+   402→    evaluate: (a) => (a.relationshipProof ? 'pass' : 'fail'),
+   403→  },
+   404→  {
+   405→    id: 'gb-fm-income',
+   406→    countryIso: 'GB',
+   407→    category: 'family',
+   408→    status: 'PENDING_HUMAN_CLICK',
+   409→    authority: { shortName: 'UKVI', officialName: 'UK Visas and Immigration', url: 'https://www.gov.uk/uk-family-visas' },
+   410→    lastUpdated: today,
+   411→    effectiveFrom: '2024-01-01T00:00:00Z',
+   412→    validTo: null,
+   413→    title: {
+   414→      en: 'Sponsor income threshold',
+   415→      ur: 'اسپانسر کی آمدنی کی حد',
+   416→      bn: 'স্পন্সরের আয় সীমা',
+   417→    },
+   418→    summary: {
+   419→      en: `Your sponsor must meet the minimum income threshold of £${UK_FAMILY_INCOME.toLocaleString()}/year (higher if dependent children).`,
+   420→      ur: `آپ کے اسپانسر کو £${UK_FAMILY_INCOME.toLocaleString()}/سال کی کم سے کم آمدنی کی حد پوری کرنی ہوگی (کچھ بچوں کی صورت میں زیادہ)۔`,
+   421→      bn: `আপনার স্পন্সরকে £${UK_FAMILY_INCOME.toLocaleString()}/বছর ন্যূনতম আয় সীমা পূরণ করতে হবে (নির্ভরশীল সন্তান থাকলে বেশি)।`,
+   422→    },
+   423→    source: 'https://www.gov.uk/uk-family-visas/partner-spouse',
+   424→    applies: () => true,
+   425→    evaluate: (a) => (a.sponsorIncomeMet ? 'pass' : 'fail'),
+   426→  },
+   427→
+   428→  // =====================================================
+   429→  // UNITED STATES — SKILLED WORKER (H-1B)
+   430→  // =====================================================
+   431→  {
+   432→    id: 'us-sw-offer',
+   433→    countryIso: 'US',
+   434→    category: 'skilled_worker',
+   435→    status: 'PENDING_HUMAN_CLICK',
+   436→    authority: { shortName: 'USCIS', officialName: 'U.S. Citizenship and Immigration Services', url: 'https://www.uscis.gov/working-in-the-united-states/h-1b-specialty-occupations' },
+   437→    lastUpdated: today,
+   438→    effectiveFrom: '2024-01-01T00:00:00Z',
+   439→    validTo: null,
+   440→    title: {
+   441→      en: 'Job offer from US employer',
+   442→      ur: 'امریکی ملازم سے نوکری کی پیشکش',
+   443→      bn: 'মার্কিন নিয়োগকর্তার কাছ থেকে চাকরির প্রস্তাব',
+   444→    },
+   445→    summary: {
+   446→      en: 'You must have a job offer from a US employer for a specialty occupation requiring a bachelor’s degree or higher (or equivalent).',
+   447→      ur: 'آپ کے پاس امریکی ملازم سے اسپیشلٹی آکپیوشن کے لیے نوکری کی پیشکش ہونی چاہیے جس کے لیے بیچلر ڈگری یا اس کے مساوی درکار ہو۔',
+   448→      bn: 'আপনার কাছে একজন মার্কিন নিয়োগকর্তার কাছ থেকে স্পেশালটি অকুপেশনের জন্য চাকরির প্রস্তাব থাকতে হবে যার জন্য ব্যাচেলর ডিগ্রি বা সমতুল্য প্রয়োজন।',
+   449→    },
+   450→    source: 'https://www.uscis.gov/working-in-the-united-states/h-1b-specialty-occupations',
+   451→    proposedChange: {
+   452→      status: 'announced',
+   453→      summary: 'USCIS announced wage-based selection for H-1B registrations effective FY2027 (January 2026).',
+   454→      expectedEffectiveAt: '2026-01-01T00:00:00Z',
+   455→      sourceUrl: 'https://www.uscis.gov/working-in-the-united-states/temporary-workers/h-1b-specialty-occupations',
+   456→    },
+   457→    applies: () => true,
+   458→    evaluate: (a) => (a.hasCos ? 'pass' : 'fail'),
+   459→  },
+   460→  {
+   461→    id: 'us-sw-salary',
+   462→    countryIso: 'US',
+   463→    category: 'skilled_worker',
+   464→    status: 'PENDING_HUMAN_CLICK',
+   465→    authority: { shortName: 'USCIS', officialName: 'U.S. Citizenship and Immigration Services', url: 'https://www.uscis.gov/working-in-the-united-states/h-1b-specialty-occupations' },
+   466→    lastUpdated: today,
+   467→    effectiveFrom: '2024-01-01T00:00:00Z',
+   468→    validTo: null,
+   469→    title: {
+   470→      en: 'Prevailing wage (LCA)',
+   471→      ur: 'حاوی تنخواہ (LCA)',
+   472→      bn: 'প্রচলিত বেতন (LCA)',
+   473→    },
+   474→    summary: {
+   475→      en: `Your employer must pay at least the prevailing wage for the role and location (Level 1 minimum ~$${US_H1B_LEVEL_1.toLocaleString()}/year).`,
+   476→      ur: `آپ کے ملازم کو کردار اور مقام کے حساب سے حاوی تنخواہ ادا کرنی ہوگی (لیول 1 کم سے کم ~$${US_H1B_LEVEL_1.toLocaleString()}/سال)۔`,
+   477→      bn: `আপনার নিয়োগকর্তাকে ভূমিকা এবং অবস্থান অনুযায়ী প্রচলিত বেতন দিতে হবে (লেভেল ১ ন্যূনতম ~$${US_H1B_LEVEL_1.toLocaleString()}/বছর)।`,
+   478→    },
+   479→    source: 'https://www.uscis.gov/working-in-the-united-states/h-1b-specialty-occupations',
+   480→    applies: () => true,
+   481→    evaluate: (a) => (a.salary >= US_H1B_LEVEL_1 ? 'pass' : 'fail'),
+   482→  },
+   483→  {
+   484→    id: 'us-sw-cap',
+   485→    countryIso: 'US',
+   486→    category: 'skilled_worker',
+   487→    status: 'PENDING_HUMAN_CLICK',
+   488→    authority: { shortName: 'USCIS', officialName: 'U.S. Citizenship and Immigration Services', url: 'https://www.uscis.gov/working-in-the-united-states/h-1b-specialty-occupations' },
+   489→    lastUpdated: today,
+   490→    effectiveFrom: '2024-01-01T00:00:00Z',
+   491→    validTo: null,
+   492→    title: {
+   493→      en: 'H-1B cap selection',
+   494→      ur: 'H-1B کیپ سلیکشن',
+   495→      bn: 'H-1B ক্যাপ নির্বাচন',
+   496→    },
+   497→    summary: {
+   498→      en: 'H-1B is subject to an annual cap of 65,000 + 20,000 for US-master’s holders. You must be selected in the lottery (or cap-exempt).',
+   499→      ur: 'H-1B سالانہ 65,000 + 20,000 (امریکی ماسٹرز ہولڈرز کے لیے) کیپ کا تابع ہے۔ آپ کو لاٹری میں منتخب ہونا ہوگا (یا کیپ سے مستثنیٰ)۔',
+   500→      bn: 'H-1B বার্ষিক 65,000 + 20,000 (মার্কিন মাস্টার্স ধারকদের জন্য) ক্যাপের অধীন। আপনাকে লটারিতে নির্বাচিত হতে হবে (বা ক্যাপ-ছাড়া)।',
+   501→    },
+   502→    source: 'https://www.uscis.gov/working-in-the-united-states/h-1b-specialty-occupations',
+   503→    proposedChange: {
+   504→      status: 'consultation',
+   505→      summary: 'USCIS opened consultation on H-1B cap allocation reform — shift from single registration window to multi-phase selection, effective April 2026.',
+   506→      expectedEffectiveAt: '2026-04-01T00:00:00Z',
+   507→      sourceUrl: 'https://www.uscis.gov/working-in-the-united-states/temporary-workers/h-1b-specialty-occupations',
+   508→    },
+   509→    applies: () => true,
+   510→    evaluate: (a) => (a.hasCos ? 'pass' : 'fail'),
+   511→  },
+   512→
+   513→  // =====================================================
+   514→  // UNITED STATES — STUDENT (F-1)
+   515→  // =====================================================
+   516→  {
+   517→    id: 'us-st-admission',
+   518→    countryIso: 'US',
+   519→    category: 'student',
+   520→    status: 'PENDING_HUMAN_CLICK',
+   521→    authority: { shortName: 'USCIS', officialName: 'U.S. Citizenship and Immigration Services', url: 'https://www.uscis.gov/study-in-the-us' },
+   522→    lastUpdated: today,
+   523→    effectiveFrom: '2024-01-01T00:00:00Z',
+   524→    validTo: null,
+   525→    title: {
+   526→      en: 'Form I-20 from SEVP-certified school',
+   527→      ur: 'SEVP سرٹیفائیڈ اسکول سے فارم I-20',
+   528→      bn: 'SEVP-স্বীকৃত স্কুল থেকে ফর্ম I-20',
+   529→    },
+   530→    summary: {
+   531→      en: 'You must be accepted by a Student and Exchange Visitor Program (SEVP)-certified school and receive a Form I-20 before applying.',
+   532→      ur: 'آپ کو اسٹوڈنٹ اینڈ ایکسچینج وزیٹر پروگرام (SEVP) سرٹیفائیڈ اسکول میں قبول ہونا چاہیے اور درخواست سے پہلے فارم I-20 وصول کرنا چاہیے।',
+   533→      bn: 'আপনাকে স্টুডেন্ট অ্যান্ড এক্সচেঞ্জ ভিজিটর প্রোগ্রাম (SEVP)-স্বীকৃত স্কুলে গৃহীত হতে হবে এবং আবেদনের আগে ফর্ম I-20 পেতে হবে।',
+   534→    },
+   535→    source: 'https://www.uscis.gov/study-in-the-us',
+   536→    applies: () => true,
+   537→    evaluate: (a) => (a.admissionOffer ? 'pass' : 'fail'),
+   538→  },
+   539→  {
+   540→    id: 'us-st-funds',
+   541→    countryIso: 'US',
+   542→    category: 'student',
+   543→    status: 'PENDING_HUMAN_CLICK',
+   544→    authority: { shortName: 'USCIS', officialName: 'U.S. Citizenship and Immigration Services', url: 'https://www.uscis.gov/study-in-the-us' },
+   545→    lastUpdated: today,
+   546→    effectiveFrom: '2024-01-01T00:00:00Z',
+   547→    validTo: null,
+   548→    title: {
+   549→      en: 'Sufficient funds (I-20 amount)',
+   550→      ur: 'کافی فنڈز (I-20 کی رقم)',
+   551→      bn: 'পর্যাপ্ত তহবিল (I-20 পরিমাণ)',
+   552→    },
+   553→    summary: {
+   554→      en: `You must show funds to cover the first year of study and living expenses as listed on your Form I-20 (typically $${US_F1_FUNDS.toLocaleString()}+).`,
+   555→      ur: `آپ کو اپنے فارم I-20 پر درج پہلے سال کی تعلیم اور زرخیز اخراجات کے لیے فنڈز دکھانے ہوں گے (عام طور پر $${US_F1_FUNDS.toLocaleString()}+)۔`,
+   556→      bn: `আপনাকে আপনার ফর্ম I-20 এ তালিকাভুক্ত প্রথম বছরের অধ্যয়ন এবং জীবনযাত্রার ব্যয়ের জন্য তহবিল দেখাতে হবে (সাধারণত $${US_F1_FUNDS.toLocaleString()}+)।`,
+   557→    },
+   558→    source: 'https://www.ice.gov/sevis',
+   559→    applies: () => true,
+   560→    evaluate: (a) => (a.studyFundsMet ? 'pass' : 'fail'),
+   561→  },
+   562→
+   563→  // =====================================================
+   564→  // UNITED STATES — VISITOR (B-1/B-2)
+   565→  // =====================================================
+   566→  {
+   567→    id: 'us-vs-purpose',
+   568→    countryIso: 'US',
+   569→    category: 'visitor',
+   570→    status: 'PENDING_HUMAN_CLICK',
+   571→    authority: { shortName: 'USCIS', officialName: 'U.S. Citizenship and Immigration Services', url: 'https://www.uscis.gov/visit-the-united-states' },
+   572→    lastUpdated: today,
+   573→    effectiveFrom: '2024-01-01T00:00:00Z',
+   574→    validTo: null,
+   575→    title: {
+   576→      en: 'B-1/B-2 permitted purpose',
+   577→      ur: 'B-1/B-2 اجازت شدہ مقصد',
+   578→      bn: 'B-1/B-2 অনুমোদিত উদ্দেশ্য',
+   579→    },
+   580→    summary: {
+   581→      en: 'B-1 for business (meetings, conferences). B-2 for tourism, family visits, medical treatment. No employment or study.',
+   582→      ur: 'B-1 کاروبار کے لیے (میٹنگز، کانفرنسیں)۔ B-2 سیاحت، خاندانی دورے، علاج کے لیے۔ کوئی روزگار یا تعلیم نہیں۔',
+   583→      bn: 'B-1 ব্যবসার জন্য (সাক্ষাৎকার, সম্মেলন)। B-2 পর্যটন, পারিবারিক সফর, চিকিৎসার জন্য। কোনো কর্মসংস্থান বা অধ্যয়ন নেই।',
+   584→    },
+   585→    source: 'https://www.uscis.gov/visit-the-united-states',
+   586→    applies: () => true,
+   587→    evaluate: (a) => (a.visitPurposeValid ? 'pass' : 'fail'),
+   588→  },
+   589→  {
+   590→    id: 'us-vs-ties',
+   591→    countryIso: 'US',
+   592→    category: 'visitor',
+   593→    status: 'PENDING_HUMAN_CLICK',
+   594→    authority: { shortName: 'USCIS', officialName: 'U.S. Citizenship and Immigration Services', url: 'https://www.uscis.gov/visit-the-united-states' },
+   595→    lastUpdated: today,
+   596→    effectiveFrom: '2024-01-01T00:00:00Z',
+   597→    validTo: null,
+   598→    title: {
+   599→      en: 'Ties to home country',
+   600→      ur: 'وطن سے تعلق',
+   601→      bn: 'নিজ দেশের সাথে সম্পর্ক',
+   602→    },
+   603→    summary: {
+   604→      en: 'You must demonstrate strong ties to your home country (job, family, property) to overcome the presumption of immigrant intent.',
+   605→      ur: 'آپ کو امیگریشن ارادے کے مفروضے پر قابہ پانے کے لیے اپنے وطن سے مضبوط تعلق (نوکری، خاندان، جائیداد) ظاہر کرنا ہوگا۔',
+   606→      bn: 'আপনাকে অভিবাসী অভিপ্রায়ের অনুমান কাটিয়ে ওঠার জন্য নিজ দেশের সাথে শক্তিশালী সম্পর্ক (চাকরি, পরিবার, সম্পত্তি) প্রদর্শন করতে হবে।',
+   607→    },
+   608→    source: 'https://travel.state.gov/content/travel/en/us-visas/tourism-visit/visitor.html',
+   609→    applies: () => true,
+   610→    evaluate: (a) => (a.returnTicket && a.fundsMet ? 'pass' : 'fail'),
+   611→  },
+   612→
+   613→  // =====================================================
+   614→  // CANADA — SKILLED WORKER (Express Entry)
+   615→  // =====================================================
+   616→  {
+   617→    id: 'ca-sw-crs',
+   618→    countryIso: 'CA',
+   619→    category: 'skilled_worker',
+   620→    status: 'PENDING_HUMAN_CLICK',
+   621→    authority: { shortName: 'IRCC', officialName: 'Immigration, Refugees and Citizenship Canada', url: 'https://www.canada.ca/en/immigration-refugees-citizenship/services/immigrate-canada/express-entry.html' },
+   622→    lastUpdated: today,
+   623→    effectiveFrom: '2024-01-01T00:00:00Z',
+   624→    validTo: null,
+   625→    title: {
+   626→      en: 'Express Entry — CRS points',
+   627→      ur: 'ایکسپریس انٹری — CRS پوائنٹس',
+   628→      bn: 'এক্সপ্রেস এন্ট্রি — CRS পয়েন্ট',
+   629→    },
+   630→    summary: {
+   631→      en: `You must create an Express Entry profile and meet the minimum Comprehensive Ranking System (CRS) score (typically ${CA_CRIS_MIN}+ for FSW).`,
+   632→      ur: `آپ کو ایکسپریس انٹری پروفائل بنانی ہوگی ا کمپریہنسیو رینکنگ سسٹم (CRS) کی کم سے کم اسکور (${CA_CRIS_MIN}+ FSW کے لیے) پوری کرنی ہوگی۔`,
+   633→      bn: `আপনাকে একটি এক্সপ্রেস এন্ট্রি প্রোফাইল তৈরি করতে হবে এবং ন্যূনতম কম্প্রিহেনসিভ র‍্যাঙ্কিং সিস্টেম (CRS) স্কোর (সাধারণত FSW-এর জন্য ${CA_CRIS_MIN}+) পূরণ করতে হবে।`,
+   634→    },
+   635→    source: 'https://www.canada.ca/en/immigration-refugees-citizenship/services/immigrate-canada/express-entry.html',
+   636→    proposedChange: {
+   637→      status: 'announced',
+   638→      summary: 'IRCC announced STEM category-based Express Entry draws expansion — 4 new occupations including data scientists, AI specialists. Effective March 2026.',
+   639→      expectedEffectiveAt: '2026-03-15T00:00:00Z',
+   640→      sourceUrl: 'https://www.canada.ca/en/immigration-refugees-citizenship/services/immigrate-canada/express-entry.html',
+   641→    },
+   642→    applies: () => true,
+   643→    evaluate: (a) => (a.hasCos && a.englishMet ? 'pass' : 'fail'),
+   644→  },
+   645→  {
+   646→    id: 'ca-sw-language',
+   647→    countryIso: 'CA',
+   648→    category: 'skilled_worker',
+   649→    status: 'PENDING_HUMAN_CLICK',
+   650→    authority: { shortName: 'IRCC', officialName: 'Immigration, Refugees and Citizenship Canada', url: 'https://www.canada.ca/en/immigration-refugees-citizenship.html' },
+   651→    lastUpdated: today,
+   652→    effectiveFrom: '2024-01-01T00:00:00Z',
+   653→    validTo: null,
+   654→    title: {
+   655→      en: 'Language — CLB 7 (English) or NCLC 7 (French)',
+   656→      ur: 'زبان — CLB 7 (انگریزی) یا NCLC 7 (فرانسیسی)',
+   657→      bn: 'ভাষা — CLB 7 (ইংরেজি) বা NCLC 7 (ফরাসি)',
+   658→    },
+   659→    summary: {
+   660→      en: 'You must achieve CLB 7 in all four abilities (reading, writing, listening, speaking) in English or NCLC 7 in French.',
+   661→      ur: 'آپ کو انگریزی میں چاروں صلاحیتوں (پڑھنا، لکھنا، سننا، بولنا) میں CLB 7 یا فرانسیسی میں NCLC 7 حاصل کرنا ہوگا।',
+   662→      bn: 'আপনাকে ইংরেজিতে চারটি দক্ষতায় (পড়া, লেখা, শোনা, বলা) CLB 7 বা ফরাসিতে NCLC 7 অর্জন করতে হবে।',
+   663→    },
+   664→    source: 'https://www.canada.ca/en/immigration-refugees-citizenship/services/immigrate-canada/express-entry/language-requirements.html',
+   665→    applies: () => true,
+   666→    evaluate: (a) => (a.englishMet || ENGLISH_EXEMPT.has(a.nationality) ? 'pass' : 'fail'),
+   667→  },
+   668→
+   669→  // =====================================================
+   670→  // CANADA — STUDENT (Study Permit)
+   671→  // =====================================================
+   672→  {
+   673→    id: 'ca-st-loa',
+   674→    countryIso: 'CA',
+   675→    category: 'student',
+   676→    status: 'PENDING_HUMAN_CLICK',
+   677→    authority: { shortName: 'IRCC', officialName: 'Immigration, Refugees and Citizenship Canada', url: 'https://www.canada.ca/en/immigration-refugees-citizenship/services/study-canada.html' },
+   678→    lastUpdated: today,
+   679→    effectiveFrom: '2024-01-01T00:00:00Z',
+   680→    validTo: null,
+   681→    title: {
+   682→      en: 'Letter of Acceptance (LOA) from DLI',
+   683→      ur: 'DLI سے قبولیت کا خط (LOA)',
+   684→      bn: 'DLI থেকে গ্রহণের চিঠি (LOA)',
+   685→    },
+   686→    summary: {
+   687→      en: 'You must have a Letter of Acceptance from a Designated Learning Institution (DLI) in Canada.',
+   688→      ur: 'آپ کے پاس کینیڈا میں ڈیزگنیٹڈ لرننگ انسٹی ٹیوشن (DLI) سے قبولیت کا خط ہونا چاہیے।',
+   689→      bn: 'আপনার কাছে কানাডার একটি ডিজিগনেটেড লার্নিং ইনস্টিটিউশন (DLI) থেকে গ্রহণের চিঠি থাকতে হবে।',
+   690→    },
+   691→    source: 'https://www.canada.ca/en/immigration-refugees-citizenship/services/study-canada.html',
+   692→    proposedChange: {
+   693→      status: 'effective_soon' as any,
+   694→      summary: 'IRCC confirmed provincial attestation letter required for all study permit applications from 2026-01-01.',
+   695→      expectedEffectiveAt: '2026-01-01T00:00:00Z',
+   696→      sourceUrl: 'https://www.canada.ca/en/immigration-refugees-citizenship/services/study-canada.html',
+   697→    },
+   698→    applies: () => true,
+   699→    evaluate: (a) => (a.admissionOffer ? 'pass' : 'fail'),
+   700→  },
+   701→  {
+   702→    id: 'ca-st-funds',
+   703→    countryIso: 'CA',
+   704→    category: 'student',
+   705→    status: 'PENDING_HUMAN_CLICK',
+   706→    authority: { shortName: 'IRCC', officialName: 'Immigration, Refugees and Citizenship Canada', url: 'https://www.canada.ca/en/immigration-refugees-citizenship/services/study-canada.html' },
+   707→    lastUpdated: today,
+   708→    effectiveFrom: '2024-01-01T00:00:00Z',
+   709→    validTo: null,
+   710→    title: {
+   711→      en: 'GIC / proof of funds',
+   712→      ur: 'GIC / فنڈز کا ثبوت',
+   713→      bn: 'GIC / তহবিলের প্রমাণ',
+   714→    },
+   715→    summary: {
+   716→      en: `You must show proof of funds for tuition plus living expenses (CAD $${CA_STUDY_FUNDS.toLocaleString()} for a single applicant outside Quebec).`,
+   717→      ur: `آپ کو ٹیوشن اور زرخیز اخراجات کے لیے فنڈز کا ثبوت دکھانا ہوگا (کینیڈا ڈالر $${CA_STUDY_FUNDS.toLocaleString()} کیوبیک کے باہر سنگل درخواست گزار کے لیے)۔`,
+   718→      bn: `আপনাকে টিউশন এবং জীবনযাত্রার ব্যয়ের জন্য তহবিলের প্রমাণ দেখাতে হবে (কিউবেকের বাইরে একক আবেদনকারীর জন্য CAD $${CA_STUDY_FUNDS.toLocaleString()})।`,
+   719→    },
+   720→    source: 'https://www.canada.ca/en/immigration-refugees-citizenship/services/study-canada/study-permit/prepare.html',
+   721→    applies: () => true,
+   722→    evaluate: (a) => (a.studyFundsMet ? 'pass' : 'fail'),
+   723→  },
+   724→
+   725→  // =====================================================
+   726→  // AUSTRALIA — SKILLED WORKER (TSS 482)
+   727→  // =====================================================
+   728→  {
+   729→    id: 'au-sw-sponsor',
+   730→    countryIso: 'AU',
+   731→    category: 'skilled_worker',
+   732→    status: 'PENDING_HUMAN_CLICK',
+   733→    authority: { shortName: 'Home Affairs', officialName: 'Department of Home Affairs', url: 'https://immi.homeaffairs.gov.au/visas/getting-a-visa/visa-listing/temporary-skill-shortage-482' },
+   734→    lastUpdated: today,
+   735→    effectiveFrom: '2024-01-01T00:00:00Z',
+   736→    validTo: null,
+   737→    title: {
+   738→      en: 'Approved sponsor + nomination',
+   739→      ur: 'منظور شدہ اسپانسر + نامزدگی',
+   740→      bn: 'অনুমোদিত স্পন্সর + মনোনয়ন',
+   741→    },
+   742→    summary: {
+   743→      en: 'Your employer must be an approved sponsor and lodge a nomination for the role (short-term, medium-term, or labour agreement stream).',
+   744→      ur: 'آپ کا ملازم منظور شدہ اسپانسر ہونا چاہیے اور کردار کے لیے نامزدگی داخل کرنی چاہیے (شارٹ ٹرم، میڈیم ٹرم، یا لیبر ایگریمنٹ سٹریم)۔',
+   745→      bn: 'আপনার নিয়োগকর্তাকে অনুমোদিত স্পন্সর হতে হবে এবং ভূমিকার জন্য মনোনয়ন জমা দিতে হবে (শর্ট-টার্ম, মিডিয়াম-টার্ম, বা লেবার এগ্রিমেন্ট স্ট্রিম)।',
+   746→    },
+   747→    source: 'https://immi.homeaffairs.gov.au/visas/getting-a-visa/visa-listing/temporary-skill-shortage-482',
+   748→    proposedChange: {
+   749→      status: 'announced',
+   750→      summary: 'Home Affairs announced 482 → PR pathway expansion: required work period reduced from 3 years to 2 years. Effective July 2026.',
+   751→      expectedEffectiveAt: '2026-07-01T00:00:00Z',
+   752→      sourceUrl: 'https://immi.homeaffairs.gov.au/visas/getting-a-visa/visa-listing/temporary-skill-shortage-482',
+   753→    },
+   754→    applies: () => true,
+   755→    evaluate: (a) => (a.hasCos && a.sponsorLicensed === 'yes' ? 'pass' : 'fail'),
+   756→  },
+   757→  {
+   758→    id: 'au-sw-salary',
+   759→    countryIso: 'AU',
+   760→    category: 'skilled_worker',
+   761→    status: 'PENDING_HUMAN_CLICK',
+   762→    authority: { shortName: 'Home Affairs', officialName: 'Department of Home Affairs', url: 'https://immi.homeaffairs.gov.au/' },
+   763→    lastUpdated: today,
+   764→    effectiveFrom: '2024-01-01T00:00:00Z',
+   765→    validTo: null,
+   766→    title: {
+   767→      en: 'TSMIT — minimum salary threshold',
+   768→      ur: 'TSMIT — کم سے کم تنخواہ کی حد',
+   769→      bn: 'TSMIT — ন্যূনতম বেতন সীমা',
+   770→    },
+   771→    summary: {
+   772→      en: `Your salary must meet or exceed the Temporary Skilled Migration Income Threshold (TSMIT) of AUD $${AU_TSMIT.toLocaleString()}/year.`,
+   773→      ur: `آپ کی تنخواہ عارضی ہنر مند مائیگریشن آمدنی کی حد (TSMIT) AUD $${AU_TSMIT.toLocaleString()}/سال کو پورا کرنی چاہیے یا اس سے زیادہ ہونی چاہیے।`,
+   774→      bn: `আপনার বেতন টেম্পোরারি স্কিলড মাইগ্রেশন ইনকাম থ্রেশহোল্ড (TSMIT) AUD $${AU_TSMIT.toLocaleString()}/বছর পূরণ করতে হবে বা তার বেশি হতে হবে।`,
+   775→    },
+   776→    source: 'https://immi.homeaffairs.gov.au/visas/getting-a-visa/visa-listing/temporary-skill-shortage-482',
+   777→    applies: () => true,
+   778→    evaluate: (a) => (a.salary >= AU_TSMIT ? 'pass' : 'fail'),
+   779→  },
+   780→
+   781→  // =====================================================
+   782→  // AUSTRALIA — STUDENT (subclass 500)
+   783→  // =====================================================
+   784→  {
+   785→    id: 'au-st-coe',
+   786→    countryIso: 'AU',
+   787→    category: 'student',
+   788→    status: 'PENDING_HUMAN_CLICK',
+   789→    authority: { shortName: 'Home Affairs', officialName: 'Department of Home Affairs', url: 'https://immi.homeaffairs.gov.au/visas/getting-a-visa/visa-listing/student-500' },
+   790→    lastUpdated: today,
+   791→    effectiveFrom: '2024-01-01T00:00:00Z',
+   792→    validTo: null,
+   793→    title: {
+   794→      en: 'Confirmation of Enrolment (CoE)',
+   795→      ur: 'انرولمنٹ کی تصدیق (CoE)',
+   796→      bn: 'এনরোলমেন্টের নিশ্চিতকরণ (CoE)',
+   797→    },
+   798→    summary: {
+   799→      en: 'You must have a Confirmation of Enrolment (CoE) from a registered Australian education provider before applying.',
+   800→      ur: 'درخواست سے پہلے آپ کے پاس رجسٹرڈ آسٹریلین تعلیمی فراہم کنندہ سے انرولمنٹ کی تصدیق (CoE) ہونا چاہیے।',
+   801→      bn: 'আবেদনের আগে আপনার একটি নিবন্ধিত অস্ট্রেলিয়ান শিক্ষা প্রদানকারীর কাছ থেকে এনরোলমেন্টের নিশ্চিতকরণ (CoE) থাকতে হবে।',
+   802→    },
+   803→    source: 'https://immi.homeaffairs.gov.au/visas/getting-a-visa/visa-listing/student-500',
+   804→    proposedChange: {
+   805→      status: 'effective_soon' as any,
+   806→      summary: 'Genuine Student (GS) requirement replaces Genuine Temporary Entrant (GTE) test for all Student visa (subclass 500) applications lodged from 2026-01-01.',
+   807→      expectedEffectiveAt: '2026-01-01T00:00:00Z',
+   808→      sourceUrl: 'https://immi.homeaffairs.gov.au/visas/getting-a-visa/visa-listing/student-500',
+   809→    },
+   810→    applies: () => true,
+   811→    evaluate: (a) => (a.admissionOffer ? 'pass' : 'fail'),
+   812→  },
+   813→  {
+   814→    id: 'au-st-funds',
+   815→    countryIso: 'AU',
+   816→    category: 'student',
+   817→    status: 'PENDING_HUMAN_CLICK',
+   818→    authority: { shortName: 'Home Affairs', officialName: 'Department of Home Affairs', url: 'https://immi.homeaffairs.gov.au/' },
+   819→    lastUpdated: today,
+   820→    effectiveFrom: '2024-01-01T00:00:00Z',
+   821→    validTo: null,
+   822→    title: {
+   823→      en: 'Financial capacity (AUD $24,505+)',
+   824→      ur: 'مالی صلاحیت (AUD $24,505+)',
+   825→      bn: 'আর্থিক সক্ষমতা (AUD $24,505+)',
+   826→    },
+   827→    summary: {
+   828→      en: `You must show AUD $${AU_STUDENT_FUNDS.toLocaleString()} per year for living costs, plus tuition and travel funds.`,
+   829→      ur: `آپ کو زرخیز اخراجات کے لیے AUD $${AU_STUDENT_FUNDS.toLocaleString()} سالانہ، ساتھ ٹیوشن اور سفر کے فنڈز دکھانے ہوں گے۔`,
+   830→      bn: `আপনাকে জীবনযাত্রার ব্যয়ের জন্য AUD $${AU_STUDENT_FUNDS.toLocaleString()}/বছর, পাশাপাশি টিউশন এবং ভ্রমণ তহবিল দেখাতে হবে।`,
+   831→    },
+   832→    source: 'https://immi.homeaffairs.gov.au/visas/getting-a-visa/visa-listing/student-500',
+   833→    applies: () => true,
+   834→    evaluate: (a) => (a.studyFundsMet ? 'pass' : 'fail'),
+   835→  },
+   836→
+   837→  // =====================================================
+   838→  // GERMANY — SKILLED WORKER (EU Blue Card / Chancenkarte)
+   839→  // =====================================================
+   840→  {
+   841→    id: 'de-sw-bluecard',
+   842→    countryIso: 'DE',
+   843→    category: 'skilled_worker',
+   844→    status: 'PENDING_HUMAN_CLICK',
+   845→    authority: { shortName: 'BAMF', officialName: 'Federal Office for Migration and Refugees', url: 'https://www.bamf.de/EN/Themen/MigrationAufenthalt/Zuwanderung/FachkraefteEinreise/blaukarte/blaukarte-node.html' },
+   846→    lastUpdated: today,
+   847→    effectiveFrom: '2024-01-01T00:00:00Z',
+   848→    validTo: null,
+   849→    title: {
+   850→      en: 'EU Blue Card — recognised qualification',
+   851→      ur: 'ای یو بلیو کارڈ — تسلیم شدہ قابلیت',
+   852→      bn: 'ইইউ ব্লু কার্ড — স্বীকৃত যোগ্যতা',
+   853→    },
+   854→    summary: {
+   855→      en: `You must have a recognised university degree and a job offer with salary ≥ €${DE_BLUE_CARD.toLocaleString()}/year (lower for shortage occupations).`,
+   856→      ur: `آپ کے پاس تسلیم شدہ یونیورسٹی ڈگری اور €${DE_BLUE_CARD.toLocaleString()}/سال یا اس سے زیادہ تنخواہ والی نوکری کی پیشکش ہونی چاہیے (قلیل روزگار پیشوں کے لیے کم)۔`,
+   857→      bn: `আপনার একটি স্বীকৃত বিশ্ববিদ্যালয় ডিগ্রি এবং €${DE_BLUE_CARD.toLocaleString()}/বছর বা তার বেশি বেতনের চাকরির প্রস্তাব থাকতে হবে (ঘাটতি পেশার জন্য কম)।`,
+   858→    },
+   859→    source: 'https://www.bamf.de/EN/Themen/MigrationAufenthalt/Zuwanderung/FachkraefteEinreise/blaukarte/blaukarte-node.html',
+   860→    proposedChange: {
+   861→      status: 'announced',
+   862→      summary: 'BAMF announced Chancenkarte (opportunity card) expansion — fast-track pathway for IT professionals with vocational experience. Effective June 2026.',
+   863→      expectedEffectiveAt: '2026-06-01T00:00:00Z',
+   864→      sourceUrl: 'https://www.bamf.de/EN/Themen/MigrationAufenthalt/Zuwanderung/FachkraefteEinreise/Chancenkarte/chancenkarte-node.html',
+   865→    },
+   866→    applies: () => true,
+   867→    evaluate: (a) => (a.hasCos && a.salary >= DE_BLUE_CARD ? 'pass' : 'fail'),
+   868→  },
+   869→  {
+   870→    id: 'de-sw-german',
+   871→    countryIso: 'DE',
+   872→    category: 'skilled_worker',
+   873→    status: 'PENDING_HUMAN_CLICK',
+   874→    authority: { shortName: 'BAMF', officialName: 'Federal Office for Migration and Refugees', url: 'https://www.bamf.de/EN/' },
+   875→    lastUpdated: today,
+   876→    effectiveFrom: '2024-01-01T00:00:00Z',
+   877→    validTo: null,
+   878→    title: {
+   879→      en: 'German language — A1 minimum (recommended B1)',
+   880→      ur: 'جرمن زبان — A1 کم سے کم (B1 تجویز کردہ)',
+   881→      bn: 'জার্মান ভাষা — A1 ন্যূনতম (B1 প্রস্তাবিত)',
+   882→    },
+   883→    summary: {
+   884→      en: 'For most skilled worker routes: A1 German minimum. Blue Card applicants are exempt unless required by the employer.',
+   885→      ur: 'زیادہ تر ہنر مند کارکن راستوں کے لیے: A1 جرمن کم سے کم۔ بلیو کارڈ درخواست گزار اس سے مستثنیٰ ہیں جب تک ملازم کی طرف سے درکار نہ ہو۔',
+   886→      bn: 'বেশিরভাগ দক্ষ কর্মী রুটের জন্য: A1 জার্মান ন্যূনতম। ব্লু কার্ড আবেদনকারীরা ছাড়প্রাপ্ত যদি না নিয়োগকর্তা প্রয়োজন করে।',
+   887→    },
+   888→    source: 'https://www.bamf.de/EN/Themen/MigrationAufenthalt/Zuwanderung/FachkraefteEinreise/fachkraefteeinreise-node.html',
+   889→    applies: () => true,
+   890→    evaluate: (a) => (a.englishMet ? 'pass' : 'fail'),
+   891→  },
+   892→
+   893→  // =====================================================
+   894→  // GERMANY — STUDENT
+   895→  // =====================================================
+   896→  {
+   897→    id: 'de-st-admission',
+   898→    countryIso: 'DE',
+   899→    category: 'student',
+   900→    status: 'PENDING_HUMAN_CLICK',
+   901→    authority: { shortName: 'BAMF', officialName: 'Federal Office for Migration and Refugees', url: 'https://www.bamf.de/EN/Themen/StudierenArbeiten/studieren/studium-node.html' },
+   902→    lastUpdated: today,
+   903→    effectiveFrom: '2024-01-01T00:00:00Z',
+   904→    validTo: null,
+   905→    title: {
+   906→      en: 'University admission letter',
+   907→      ur: 'یونیورسٹی قبولیت کا خط',
+   908→      bn: 'বিশ্ববিদ্যালয় ভর্তির চিঠি',
+   909→    },
+   910→    summary: {
+   911→      en: 'You must have an admission letter from a recognised German university or preparatory college (Studienkolleg).',
+   912→      ur: 'آپ کے پاس تسلیم شدہ جرمن یونیورسٹی یا تیاری کالج (Studienkolleg) سے قبولیت کا خط ہونا چاہیے।',
+   913→      bn: 'আপনার একটি স্বীকৃত জার্মান বিশ্ববিদ্যালয় বা প্রস্তুতি কলেজ (Studienkolleg) থেকে ভর্তির চিঠি থাকতে হবে।',
+   914→    },
+   915→    source: 'https://www.bamf.de/EN/Themen/StudierenArbeiten/studieren/studium-node.html',
+   916→    applies: () => true,
+   917→    evaluate: (a) => (a.admissionOffer ? 'pass' : 'fail'),
+   918→  },
+   919→  {
+   920→    id: 'de-st-blocked',
+   921→    countryIso: 'DE',
+   922→    category: 'student',
+   923→    status: 'PENDING_HUMAN_CLICK',
+   924→    authority: { shortName: 'BAMF', officialName: 'Federal Office for Migration and Refugees', url: 'https://www.bamf.de/EN/' },
+   925→    lastUpdated: today,
+   926→    effectiveFrom: '2024-01-01T00:00:00Z',
+   927→    validTo: null,
+   928→    title: {
+   929→      en: 'Blocked account (Sperrkonto)',
+   930→      ur: 'بلاکڈ اکاؤنٹ (Sperrkonto)',
+   931→      bn: 'ব্লকড অ্যাকাউন্ট (Sperrkonto)',
+   932→    },
+   933→    summary: {
+   934→      en: `You must show a blocked account with €${DE_BLOCKED.toLocaleString()}/year (≈ €934/month) for living expenses, or an equivalent scholarship/sponsor guarantee.`,
+   935→      ur: `آپ کو زرخیز اخراجات کے لیے €${DE_BLOCKED.toLocaleString()}/سال (≈ €934/ماہ) کے ساتھ بلاکڈ اکاؤنٹ دکھانا ہوگا، یا مساوی اسکالرشپ/اسپانسر گارنٹی۔`,
+   936→      bn: `আপনাকে জীবনযাত্রার ব্যয়ের জন্য €${DE_BLOCKED.toLocaleString()}/বছর (≈ €934/মাস) সহ একটি ব্লকড অ্যাকাউন্ট দেখাতে হবে, বা সমমানের স্কলারশিপ/স্পন্সর গ্যারান্টি।`,
+   937→    },
+   938→    source: 'https://www.bamf.de/EN/Themen/StudierenArbeiten/studieren/studium-node.html',
+   939→    applies: () => true,
+   940→    evaluate: (a) => (a.studyFundsMet ? 'pass' : 'fail'),
+   941→  },
+   942→
+   943→  // =====================================================
+   944→  // UAE — SKILLED WORKER (Work Permit)
+   945→  // =====================================================
+   946→  {
+   947→    id: 'ae-sw-permit',
+   948→    countryIso: 'AE',
+   949→    category: 'skilled_worker',
+   950→    status: 'PENDING_HUMAN_CLICK',
+   951→    authority: { shortName: 'ICP', officialName: 'Federal Authority for Identity and Citizenship', url: 'https://icp.gov.ae/en/' },
+   952→    lastUpdated: today,
+   953→    effectiveFrom: '2024-01-01T00:00:00Z',
+   954→    validTo: null,
+   955→    title: {
+   956→      en: 'Employer-sponsored work permit',
+   957→      ur: 'ملازم کی طرف سے اسپانسر کردہ ورک پرمٹ',
+   958→      bn: 'নিয়োগকর্তা-স্পন্সরিত ওয়ার্ক পারমিট',
+   959→    },
+   960→    summary: {
+   961→      en: `Your employer must obtain a work permit from MoHRE on your behalf. Minimum monthly salary AED ${AE_WORK_MIN.toLocaleString()} for skilled categories.`,
+   962→      ur: `آپ کے ملازم کو آپ کی طرف سے MoHRE سے ورک پرمٹ حاصل کرنا ہوگا۔ ہنر مند اقسام کے لیے کم سے کم ماہانہ تنخواہ AED ${AE_WORK_MIN.toLocaleString()}۔`,
+   963→      bn: `আপনার নিয়োগকর্তাকে আপনার পক্ষে MoHRE থেকে একটি ওয়ার্ক পারমিট অর্জন করতে হবে। দক্ষ বিভাগের জন্য ন্যূনতম মাসিক বেতন AED ${AE_WORK_MIN.toLocaleString()}।`,
+   964→    },
+   965→    source: 'https://icp.gov.ae/en/',
+   966→    proposedChange: {
+   967→      status: 'announced',
+   968→      summary: 'ICP announced Green Visa expansion for skilled talent — new eligibility for healthcare, sustainability, and creative industries. Effective March 2026.',
+   969→      expectedEffectiveAt: '2026-03-01T00:00:00Z',
+   970→      sourceUrl: 'https://icp.gov.ae/en/',
+   971→    },
+   972→    applies: () => true,
+   973→    evaluate: (a) => (a.hasCos ? 'pass' : 'fail'),
+   974→  },
+   975→  {
+   976→    id: 'ae-sw-medical',
+   977→    countryIso: 'AE',
+   978→    category: 'skilled_worker',
+   979→    status: 'PENDING_HUMAN_CLICK',
+   980→    authority: { shortName: 'ICP', officialName: 'Federal Authority for Identity and Citizenship', url: 'https://icp.gov.ae/en/' },
+   981→    lastUpdated: today,
+   982→    effectiveFrom: '2024-01-01T00:00:00Z',
+   983→    validTo: null,
+   984→    title: {
+   985→      en: 'Medical fitness test',
+   986→      ur: 'طبی فٹنس ٹیسٹ',
+   987→      bn: 'মেডিকেল ফিটনেস টেস্ট',
+   988→    },
+   989→    summary: {
+   990→      en: 'You must pass a medical fitness test (blood tests for HIV, hepatitis, etc.) at a UAE-approved medical center.',
+   991→      ur: 'آپ کو متحدہ عرب امارات میں منظور شدہ طبی مرکز پر طبی فٹنس ٹیسٹ (HIV، ہیپاٹائٹس وغیرہ کے لیے خون کے ٹیسٹ) پاس کرنا ہوگا۔',
+   992→      bn: 'আপনাকে সংযুক্ত আরব আমিরাত-অনুমোদিত মেডিকেল সেন্টারে একটি মেডিকেল ফিটনেস টেস্ট (এইচআইভি, হেপাটাইটিস ইত্যাদির জন্য রক্ত পরীক্ষা) পাস করতে হবে।',
+   993→    },
+   994→    source: 'https://icp.gov.ae/en/',
+   995→    applies: () => true,
+   996→    evaluate: () => 'pass',
+   997→  },
+   998→
+   999→  // =====================================================
+  1000→  // UAE — VISITOR
+  1001→  // =====================================================
+  1002→  {
+  1003→    id: 'ae-vs-visa',
+  1004→    countryIso: 'AE',
+  1005→    category: 'visitor',
+  1006→    status: 'PENDING_HUMAN_CLICK',
+  1007→    authority: { shortName: 'ICP', officialName: 'Federal Authority for Identity and Citizenship', url: 'https://icp.gov.ae/en/' },
+  1008→    lastUpdated: today,
+  1009→    effectiveFrom: '2024-01-01T00:00:00Z',
+  1010→    validTo: null,
+  1011→    title: {
+  1012→      en: 'Tourist visa sponsorship',
+  1013→      ur: 'ٹورسٹ ویزا اسپانسرشپ',
+  1014→      bn: 'ট্যুরিস্ট ভিসা স্পন্সরশিপ',
+  1015→    },
+  1016→    summary: {
+  1017→      en: 'Tourist visas require sponsorship by a UAE-based airline, hotel, travel agency, or resident relative. Some nationalities get visa-on-arrival.',
+  1018→      ur: 'ٹورسٹ ویزا کے لیے متحدہ عرب امارات میں واقع ایئرلائن، ہوٹل، ٹریول ایجنسی، یا رہائشی رشتہ دار کی اسپانسرشپ درکار ہے۔ کچھ قومیتوں کو ویزا آن ارائول ملتا ہے۔',
+  1019→      bn: 'ট্যুরিস্ট ভিসার জন্য সংযুক্ত আরব আমিরাত-ভিত্তিক এয়ারলাইন, হোটেল, ট্রাভেল এজেন্সি, বা বাসিন্দা আত্মীয়ের স্পন্সরশিপ প্রয়োজন। কিছু জাতীয়তা আগমনের সময় ভিসা পায়।',
+  1020→    },
+  1021→    source: 'https://icp.gov.ae/en/',
+  1022→    proposedChange: {
+  1023→      status: 'announced',
+  1024→      summary: 'ICP announced five-year multi-entry tourist visa for all nationalities, replacing 90-day single-entry scheme. Effective February 2026.',
+  1025→      expectedEffectiveAt: '2026-02-01T00:00:00Z',
+  1026→      sourceUrl: 'https://icp.gov.ae/en/',
+  1027→    },
+  1028→    applies: () => true,
+  1029→    evaluate: (a) => (a.fundsMet && a.returnTicket ? 'pass' : 'fail'),
+  1030→  },
+  1031→
+  1032→  // =====================================================
+  1033→  // UK — BUSINESS (Innovator Founder)
+  1034→  // =====================================================
+  1035→  {
+  1036→    id: 'gb-biz-plan',
+  1037→    countryIso: 'GB',
+  1038→    category: 'business',
+  1039→    status: 'PENDING_HUMAN_CLICK',
+  1040→    authority: { shortName: 'UKVI', officialName: 'UK Visas and Immigration', url: 'https://www.gov.uk/innovator-founder-visa' },
+  1041→    lastUpdated: today,
+  1042→    effectiveFrom: '2024-01-01T00:00:00Z',
+  1043→    validTo: null,
+  1044→    title: {
+  1045→      en: 'Innovator Founder — endorsed business plan',
+  1046→      ur: 'انوویٹر فاؤنڈر — توثیق شدہ کاروباری منصوبہ',
+  1047→      bn: 'ইনোভেটর ফাউন্ডার — সমর্থিত ব্যবসায়িক পরিকল্পনা',
+  1048→    },
+  1049→    summary: {
+  1050→      en: 'You must have an innovative, viable, and scalable business idea endorsed by an approved endorsing body.',
+  1051→      ur: 'آپ کے پاس منظور شدہ توثیقی ادارے کی طرف سے توثیق شدہ ایک جدید، قابل عمل، اور اسکیل ایبل کاروباری خیال ہونا چاہیے।',
+  1052→      bn: 'আপনার একটি অনুমোদিত সমর্থনকারী সংস্থা দ্বারা সমর্থিত একটি উদ্ভাবনী, কার্যকর এবং স্কেলযোগ্য ব্যবসায়িক ধারণা থাকতে হবে।',
+  1053→    },
+  1054→    source: 'https://www.gov.uk/innovator-founder-visa',
+  1055→    applies: () => true,
+  1056→    evaluate: (a) => (a.businessPlan ? 'pass' : 'fail'),
+  1057→  },
+  1058→
+  1059→  // =====================================================
+  1060→  // US — INVESTOR (EB-5)
+  1061→  // =====================================================
+  1062→  {
+  1063→    id: 'us-inv-eb5',
+  1064→    countryIso: 'US',
+  1065→    category: 'investor',
+  1066→    status: 'PENDING_HUMAN_CLICK',
+  1067→    authority: { shortName: 'USCIS', officialName: 'U.S. Citizenship and Immigration Services', url: 'https://www.uscis.gov/working-in-the-united-states/permanent-workers/eb-5-immigrant-investor-program' },
+  1068→    lastUpdated: today,
+  1069→    effectiveFrom: '2024-01-01T00:00:00Z',
+  1070→    validTo: null,
+  1071→    title: {
+  1072→      en: 'EB-5 — capital investment',
+  1073→      ur: 'EB-5 — سرمایہ کاری',
+  1074→      bn: 'EB-5 — মূলধন বিনিয়োগ',
+  1075→    },
+  1076→    summary: {
+  1077→      en: `You must invest at least $${US_E5_INVEST.toLocaleString()} in a Targeted Employment Area (TEA) or $1,000,000 elsewhere, and create 10 full-time US jobs.`,
+  1078→      ur: `آپ کو ٹارگٹڈ ایمپلائمٹ ایریا (TEA) میں کم سے کم $${US_E5_INVEST.toLocaleString()} یا کہیں اور $1,000,000 کی سرمایہ کاری کرنی ہوگی، اور 10 فل ٹائم امریکی نوکریاں پیدا کرنی ہوں گی۔`,
+  1079→      bn: `আপনাকে একটি টার্গেটেড এমপ্লয়মেন্ট এরিয়াতে (TEA) কমপক্ষে $${US_E5_INVEST.toLocaleString()} বা অন্য কোথাও $1,000,000 বিনিয়োগ করতে হবে এবং 10টি ফুল-টাইম মার্কিন চাকরি তৈরি করতে হবে।`,
+  1080→    },
+  1081→    source: 'https://www.uscis.gov/working-in-the-united-states/permanent-workers/eb-5-immigrant-investor-program',
+  1082→    applies: () => true,
+  1083→    evaluate: (a) => (a.investmentAmount >= US_E5_INVEST ? 'pass' : 'fail'),
+  1084→  },
+  1085→
+  1086→  // =====================================================
+  1087→  // AU — INVESTOR (Significant Investor Visa 188)
+  1088→  // =====================================================
+  1089→  {
+  1090→    id: 'au-inv-siv',
+  1091→    countryIso: 'AU',
+  1092→    category: 'investor',
+  1093→    status: 'PENDING_HUMAN_CLICK',
+  1094→    authority: { shortName: 'Home Affairs', officialName: 'Department of Home Affairs', url: 'https://immi.homeaffairs.gov.au/visas/getting-a-visa/visa-listing/significant-investor-188' },
+  1095→    lastUpdated: today,
+  1096→    effectiveFrom: '2024-01-01T00:00:00Z',
+  1097→    validTo: null,
+  1098→    title: {
+  1099→      en: 'Significant Investor Visa — AUD $2.5M',
+  1100→      ur: 'اہم سرمایہ کار ویزا — AUD $2.5M',
+  1101→      bn: 'সিগনিফিক্যান্ট ইনভেস্টর ভিসা — AUD $2.5M',
+  1102→    },
+  1103→    summary: {
+  1104→      en: `You must invest at least AUD $${AU_BIIP_INVEST.toLocaleString()} in complying investments (venture capital, emerging companies, balanced portfolio) for 4 years.`,
+  1105→      ur: `آپ کو 4 سال کے لیے تعمیل سرمایہ کاریوں (وینچر کیپٹل، ابھرتے کمپنیاں، متوازن پورٹفولیو) میں کم سے کم AUD $${AU_BIIP_INVEST.toLocaleString()} کی سرمایہ کاری کرنی ہوگی۔`,
+  1106→      bn: `আপনাকে 4 বছরের জন্য কমপ্লাইং বিনিয়োগে (ভেঞ্চার ক্যাপিটাল, ইমার্জিং কোম্পানি, ব্যালেন্সড পোর্টফোলিও) কমপক্ষে AUD $${AU_BIIP_INVEST.toLocaleString()} বিনিয়োগ করতে হবে।`,
+  1107→    },
+  1108→    source: 'https://immi.homeaffairs.gov.au/visas/getting-a-visa/visa-listing/significant-investor-188',
+  1109→    applies: () => true,
+  1110→    evaluate: (a) => (a.investmentAmount >= AU_BIIP_INVEST ? 'pass' : 'fail'),
+  1111→  },
+  1112→
+  1113→  // =====================================================
+  1114→  // AE — INVESTOR (Investor Visa)
+  1115→  // =====================================================
+  1116→  {
+  1117→    id: 'ae-inv-visa',
+  1118→    countryIso: 'AE',
+  1119→    category: 'investor',
+  1120→    status: 'PENDING_HUMAN_CLICK',
+  1121→    authority: { shortName: 'ICP', officialName: 'Federal Authority for Identity and Citizenship', url: 'https://icp.gov.ae/en/' },
+  1122→    lastUpdated: today,
+  1123→    effectiveFrom: '2024-01-01T00:00:00Z',
+  1124→    validTo: null,
+  1125→    title: {
+  1126→      en: 'Investor visa — AED 2M public investment',
+  1127→      ur: 'سرمایہ کار ویزا — AED 2M پبلک سرمایہ کاری',
+  1128→      bn: 'ইনভেস্টর ভিসা — AED 2M পাবলিক বিনিয়োগ',
+  1129→    },
+  1130→    summary: {
+  1131→      en: `You must invest at least AED ${AE_INVEST.toLocaleString()} in a UAE public investment fund, business, or property to qualify for the 10-year investor visa.`,
+  1132→      ur: `آپ کو 10 سالہ سرمایہ کار ویزا کے لیے اہل ہونے کے لیے متحدہ عرب امارات پبلک انوسٹمنٹ فنڈ، کاروبار، یا جائیداد میں کم سے کم AED ${AE_INVEST.toLocaleString()} کی سرمایہ کاری کرنی ہوگی۔`,
+  1133→      bn: `১০ বছরের ইনভেস্টর ভিসার জন্য যোগ্য হতে আপনাকে সংযুক্ত আরব আমিরাত পাবলিক ইনভেস্টমেন্ট ফান্ড, ব্যবসা বা সম্পত্তিতে কমপক্ষে AED ${AE_INVEST.toLocaleString()} বিনিয়োগ করতে হবে।`,
+  1134→    },
+  1135→    source: 'https://icp.gov.ae/en/',
+  1136→    applies: () => true,
+  1137→    evaluate: (a) => (a.investmentAmount >= AE_INVEST ? 'pass' : 'fail'),
+  1138→  },
+  1139→
+  1140→  // =====================================================
+  1141→  // SINGAPORE — SKILLED WORKER (Employment Pass)
+  1142→  // =====================================================
+  1143→  {
+  1144→    id: 'sg-sw-offer',
+  1145→    countryIso: 'SG',
+  1146→    category: 'skilled_worker',
+  1147→    status: 'PENDING_HUMAN_CLICK',
+  1148→    authority: { shortName: 'MOM', officialName: 'Ministry of Manpower', url: 'https://www.mom.gov.sg/passes-and-visas/employment-pass' },
+  1149→    lastUpdated: today,
+  1150→    effectiveFrom: '2024-01-01T00:00:00Z',
+  1151→    validTo: null,
+  1152→    title: {
+  1153→      en: 'Job offer from Singapore employer',
+  1154→      ur: 'سنگاپور کے ملازم سے نوکری کی پیشکش',
+  1155→      bn: 'সিঙ্গাপুরের নিয়োগকর্তার কাছ থেকে চাকরির প্রস্তাব',
+  1156→    },
+  1157→    summary: {
+  1158→      en: 'You must have a job offer from a Singapore employer for a role that meets the Employment Pass eligibility (acceptable applicant pool, job posting on MyCareersFuture).',
+  1159→      ur: 'آپ کے پاس سنگاپور کے ملازم سے ایک ایسی نوکری کی پیشکش ہونی چاہیے جو ایمپلائمنٹ پاس اہلیت کی شرائط پوری کرے۔',
+  1160→      bn: 'আপনার কাছে সিঙ্গাপুরের নিয়োগকর্তার কাছ থেকে এমন চাকরির প্রস্তাব থাকতে হবে যা এমপ্লয়মেন্ট পাস যোগ্যতা পূরণ করে।',
+  1161→    },
+  1162→    source: 'https://www.mom.gov.sg/passes-and-visas/employment-pass',
+  1163→    applies: () => true,
+  1164→    evaluate: (a) => (a.hasCos ? 'pass' : 'fail'),
+  1165→  },
+  1166→  {
+  1167→    id: 'sg-sw-salary',
+  1168→    countryIso: 'SG',
+  1169→    category: 'skilled_worker',
+  1170→    status: 'PENDING_HUMAN_CLICK',
+  1171→    authority: { shortName: 'MOM', officialName: 'Ministry of Manpower', url: 'https://www.mom.gov.sg/passes-and-visas/employment-pass' },
+  1172→    lastUpdated: today,
+  1173→    effectiveFrom: '2024-01-01T00:00:00Z',
+  1174→    validTo: null,
+  1175→    title: {
+  1176→      en: 'Minimum salary threshold (SGD $5,000+)',
+  1177→      ur: 'کم سے کم تنخواہ کی حد (SGD $5,000+)',
+  1178→      bn: 'ন্যূনতম বেতন সীমা (SGD $5,000+)',
+  1179→    },
+  1180→    summary: {
+  1181→      en: 'Your fixed monthly salary must be at least SGD $5,000 (higher for financial services sector — $5,500, or $11,000 for age 45+).',
+  1182→      ur: 'آپ کی مقررہ ماہانہ تنخواہ کم سے کم SGD $5,000 ہونی چاہیے (فنانشل سروسز سیکٹر کے لیے زیادہ — $5,500، یا 45+ سال کے لیے $11,000)۔',
+  1183→      bn: 'আপনার নির্দিষ্ট মাসিক বেতন কমপক্ষে SGD $5,000 হতে হবে (ফিন্যান্সিয়াল সার্ভিসেস সেক্টরের জন্য বেশি — $5,500, বা ৪৫+ বছরের জন্য $11,000)।',
+  1184→    },
+  1185→    source: 'https://www.mom.gov.sg/passes-and-visas/employment-pass',
+  1186→    applies: () => true,
+  1187→    evaluate: (a) => (a.salary >= 5000 ? 'pass' : 'fail'),
+  1188→  },
+  1189→
+  1190→  // =====================================================
+  1191→  // SINGAPORE — STUDENT
+  1192→  // =====================================================
+  1193→  {
+  1194→    id: 'sg-st-admission',
+  1195→    countryIso: 'SG',
+  1196→    category: 'student',
+  1197→    status: 'PENDING_HUMAN_CLICK',
+  1198→    authority: { shortName: 'MOM', officialName: 'Ministry of Manpower', url: 'https://www.mom.gov.sg/passes-and-visas/student-pass' },
+  1199→    lastUpdated: today,
+  1200→    effectiveFrom: '2024-01-01T00:00:00Z',
+  1201→    validTo: null,
+  1202→    title: {
+  1203→      en: 'Acceptance by an IHL (Institute of Higher Learning)',
+  1204→      ur: 'کسی IHL (انسٹی ٹیوٹ آف ہائیر لرننگ) کی طرف سے قبولیت',
+  1205→      bn: 'একটি IHL (ইনস্টিটিউট অফ হায়ার লার্নিং) দ্বারা গ্রহণ',
+  1206→    },
+  1207→    summary: {
+  1208→      en: 'You must be accepted by a recognised Institute of Higher Learning (IHL) in Singapore for a full-time study course.',
+  1209→      ur: 'آپ کو سنگاپور میں ایک تسلیم شدہ انسٹی ٹیوٹ آف ہائیر لرننگ (IHL) میں فل ٹائم اسٹڈی کورس کے لیے قبول کیا جانا چاہیے۔',
+  1210→      bn: 'আপনাকে সিঙ্গাপুরের একটি স্বীকৃত ইনস্টিটিউট অফ হায়ার লার্নিং (IHL) দ্বারা ফুল-টাইম স্টাডি কোর্সের জন্য গৃহীত হতে হবে।',
+  1211→    },
+  1212→    source: 'https://www.mom.gov.sg/passes-and-visas/student-pass',
+  1213→    applies: () => true,
+  1214→    evaluate: (a) => (a.admissionOffer ? 'pass' : 'fail'),
+  1215→  },
+  1216→
+  1217→  // =====================================================
+  1218→  // SINGAPORE — VISITOR
+  1219→  // =====================================================
+  1220→  {
+  1221→    id: 'sg-vs-visa',
+  1222→    countryIso: 'SG',
+  1223→    category: 'visitor',
+  1224→    status: 'PENDING_HUMAN_CLICK',
+  1225→    authority: { shortName: 'MOM', officialName: 'Ministry of Manpower', url: 'https://www.mom.gov.sg/passes-and-visas/visitor' },
+  1226→    lastUpdated: today,
+  1227→    effectiveFrom: '2024-01-01T00:00:00Z',
+  1228→    validTo: null,
+  1229→    title: {
+  1230→      en: 'Visitor visa / visa-free entry',
+  1231→      ur: 'زائر ویزا / ویزا فری انٹری',
+  1232→      bn: 'ভিজিটর ভিসা / ভিসা-মুক্ত প্রবেশ',
+  1233→    },
+  1234→    summary: {
+  1235→      en: 'Many nationalities can enter Singapore visa-free for up to 30 days. Others must apply for a visitor visa before travel. A return ticket and proof of funds are required.',
+  1236→      ur: 'بہت سی قومیتوں 30 دن تک ویزا فری سنگاپور میں داخل ہو سکتی ہیں۔ دیگر کو سفر سے پہلے زائر ویزا کے لیے درخواست دینی ہوگی۔ واپسی ٹکٹ اور فنڈز کا ثبوت درکار ہے۔',
+  1237→      bn: 'অনেক জাতীয়তা ৩০ দিন পর্যন্ত ভিসা-মুক্ত সিঙ্গাপুরে প্রবেশ করতে পারে। অন্যদের ভ্রমণের আগে ভিজিটর ভিসার জন্য আবেদন করতে হবে। ফেরার টিকিট এবং তহবিলের প্রমাণ প্রয়োজন।',
+  1238→    },
+  1239→    source: 'https://www.mom.gov.sg/passes-and-visas/visitor',
+  1240→    applies: () => true,
+  1241→    evaluate: (a) => (a.visitPurposeValid && a.returnTicket ? 'pass' : 'fail'),
+  1242→  },
+  1243→
+  1244→  // =====================================================
+  1245→  // NEW ZEALAND — SKILLED WORKER (Skilled Migrant Category)
+  1246→  // =====================================================
+  1247→  {
+  1248→    id: 'nz-sw-points',
+  1249→    countryIso: 'NZ',
+  1250→    category: 'skilled_worker',
+  1251→    status: 'PENDING_HUMAN_CLICK',
+  1252→    authority: { shortName: 'INZ', officialName: 'Immigration New Zealand', url: 'https://www.immigration.govt.nz/new-zealand-visas/visas/visa/skilled-migrant-category-visa' },
+  1253→    lastUpdated: today,
+  1254→    effectiveFrom: '2024-01-01T00:00:00Z',
+  1255→    validTo: null,
+  1256→    title: {
+  1257→      en: 'Skilled Migrant Category — points (160+)',
+  1258→      ur: 'ہنر مند مہاجر کیٹیگری — پوائنٹس (160+)',
+  1259→      bn: 'দক্ষ অভিবাসী বিভাগ — পয়েন্ট (160+)',
+  1260→    },
+  1261→    summary: {
+  1262→      en: 'You must submit an Expression of Interest (EOI) and have at least 160 points based on age, qualifications, work experience, and a job offer from an accredited employer.',
+  1263→      ur: 'آپ کو ایک اظہار دلچسپی (EOI) جمع کرانی ہوگی اور عمر، قابلیت، کام کے تجربے، اور کسی مستند ملازم سے نوکری کی پیشکش پر مبنی کم سے کم 160 پوائنٹس ہونے چاہئیں۔',
+  1264→      bn: 'আপনাকে একটি এক্সপ্রেশন অফ ইন্টারেস্ট (EOI) জমা দিতে হবে এবং বয়স, যোগ্যতা, কাজের অভিজ্ঞতা এবং একটি স্বীকৃত নিয়োগকর্তার কাছ থেকে চাকরির প্রস্তাবের উপর ভিত্তি করে কমপক্ষে ১৬০ পয়েন্ট থাকতে হবে।',
+  1265→    },
+  1266→    source: 'https://www.immigration.govt.nz/new-zealand-visas/visas/visa/skilled-migrant-category-visa',
+  1267→    applies: () => true,
+  1268→    evaluate: (a) => (a.hasCos && a.englishMet ? 'pass' : 'fail'),
+  1269→  },
+  1270→  {
+  1271→    id: 'nz-sw-english',
+  1272→    countryIso: 'NZ',
+  1273→    category: 'skilled_worker',
+  1274→    status: 'PENDING_HUMAN_CLICK',
+  1275→    authority: { shortName: 'INZ', officialName: 'Immigration New Zealand', url: 'https://www.immigration.govt.nz/' },
+  1276→    lastUpdated: today,
+  1277→    effectiveFrom: '2024-01-01T00:00:00Z',
+  1278→    validTo: null,
+  1279→    title: {
+  1280→      en: 'English language — IELTS 6.5 / PTE 58',
+  1281→      ur: 'انگریزی زبان — IELTS 6.5 / PTE 58',
+  1282→      bn: 'ইংরেজি ভাষা — IELTS 6.5 / PTE 58',
+  1283→    },
+  1284→    summary: {
+  1285→      en: 'You must meet the English language requirement (IELTS General 6.5, PTE Academic 58, or equivalent). Some nationalities are exempt.',
+  1286→      ur: 'آپ کو انگریزی زبان کی ضرورت پوری کرنی ہوگی (IELTS جنرل 6.5، PTE اکیڈمک 58، یا مساوی)۔ کچھ قومیتوں کو چھوٹ ہے।',
+  1287→      bn: 'আপনাকে ইংরেজি ভাষার প্রয়োজনীয়তা পূরণ করতে হবে (IELTS জেনারেল 6.5, PTE অ্যাকাডেমিক 58, বা সমমান)। কিছু জাতীয়তা ছাড়প্রাপ্ত।',
+  1288→    },
+  1289→    source: 'https://www.immigration.govt.nz/new-zealand-visas/apply-for-a-visa/tools-and-information/english-language',
+  1290→    applies: () => true,
+  1291→    evaluate: (a) => (a.englishMet || ENGLISH_EXEMPT.has(a.nationality) ? 'pass' : 'fail'),
+  1292→  },
+  1293→
+  1294→  // =====================================================
+  1295→  // NEW ZEALAND — STUDENT (Fee-paying Student Visa)
+  1296→  // =====================================================
+  1297→  {
+  1298→    id: 'nz-st-offer',
+  1299→    countryIso: 'NZ',
+  1300→    category: 'student',
+  1301→    status: 'PENDING_HUMAN_CLICK',
+  1302→    authority: { shortName: 'INZ', officialName: 'Immigration New Zealand', url: 'https://www.immigration.govt.nz/new-zealand-visas/visas/visa/fee-paying-student-visa' },
+  1303→    lastUpdated: today,
+  1304→    effectiveFrom: '2024-01-01T00:00:00Z',
+  1305→    validTo: null,
+  1306→    title: {
+  1307→      en: 'Offer of place from an NZ education provider',
+  1308→      ur: 'NZ تعلیمی فراہم کنندہ سے جگہ کی پیشکش',
+  1309→      bn: 'NZ শিক্ষা প্রদানকারীর কাছ থেকে স্থানের প্রস্তাব',
+  1310→    },
+  1311→    summary: {
+  1312→      en: 'You must have an offer of place from a New Zealand education provider and proof of prepaid tuition fees for the study period.',
+  1313→      ur: 'آپ کے پاس نیوزی لینڈ کے تعلیمی فراہم کنندہ سے جگہ کی پیشکش اور اسٹڈی پیریڈ کے لیے پیشگی ٹیوشن فیس کا ثبوت ہونا چاہیے۔',
+  1314→      bn: 'আপনার কাছে নিউজিল্যান্ডের শিক্ষা প্রদানকারীর কাছ থেকে স্থানের প্রস্তাব এবং অধ্যয়নকালের জন্য প্রি-পেইড টিউশন ফির প্রমাণ থাকতে হবে।',
+  1315→    },
+  1316→    source: 'https://www.immigration.govt.nz/new-zealand-visas/visas/visa/fee-paying-student-visa',
+  1317→    applies: () => true,
+  1318→    evaluate: (a) => (a.admissionOffer ? 'pass' : 'fail'),
+  1319→  },
+  1320→
+  1321→  // =====================================================
+  1322→  // NEW ZEALAND — VISITOR
+  1323→  // =====================================================
+  1324→  {
+  1325→    id: 'nz-vs-visitor',
+  1326→    countryIso: 'NZ',
+  1327→    category: 'visitor',
+  1328→    status: 'PENDING_HUMAN_CLICK',
+  1329→    authority: { shortName: 'INZ', officialName: 'Immigration New Zealand', url: 'https://www.immigration.govt.nz/new-zealand-visas/visas/visa/visitor-visa' },
+  1330→    lastUpdated: today,
+  1331→    effectiveFrom: '2024-01-01T00:00:00Z',
+  1332→    validTo: null,
+  1333→    title: {
+  1334→      en: 'Visitor visa (up to 9 months)',
+  1335→      ur: 'زائر ویزا (9 ماہ تک)',
+  1336→      bn: 'ভিজিটর ভিসা (৯ মাস পর্যন্ত)',
+  1337→    },
+  1338→    summary: {
+  1339→      en: 'A visitor visa allows stays up to 9 months for tourism, visiting family, or short business trips. You must show sufficient funds and a return ticket.',
+  1340→      ur: 'زائر ویزا سیاحت، خاندان سے ملنے، یا مختصر کاروباری سفر کے لیے 9 ماہ تک قیام کی اجازت دیتا ہے۔ آپ کو کافی فنڈز اور واپسی ٹکٹ دکھانا ہوگا۔',
+  1341→      bn: 'ভিজিটর ভিসা পর্যটন, পরিবারের সাথে দেখা করা, বা সংক্ষিপ্ত ব্যবসায়িক ভ্রমণের জন্য ৯ মাস পর্যন্ত অবস্থানের অনুমতি দেয়। আপনাকে পর্যাপ্ত তহবিল এবং ফেরার টিকিট দেখাতে হবে।',
+  1342→    },
+  1343→    source: 'https://www.immigration.govt.nz/new-zealand-visas/visas/visa/visitor-visa',
+  1344→    applies: () => true,
+  1345→    evaluate: (a) => (a.visitPurposeValid && a.returnTicket ? 'pass' : 'fail'),
+  1346→  },
+  1347→
+  1348→  // =====================================================
+  1349→  // IRELAND — SKILLED WORKER (Critical Skills Employment Permit)
+  1350→  // =====================================================
+  1351→  {
+  1352→    id: 'ie-sw-offer',
+  1353→    countryIso: 'IE',
+  1354→    category: 'skilled_worker',
+  1355→    status: 'PENDING_HUMAN_CLICK',
+  1356→    authority: { shortName: 'INIS', officialName: 'Irish Naturalisation and Immigration Service', url: 'https://www.irishimmigration.ie/' },
+  1357→    lastUpdated: today,
+  1358→    effectiveFrom: '2024-01-01T00:00:00Z',
+  1359→    validTo: null,
+  1360→    title: {
+  1361→      en: 'Job offer from Irish employer',
+  1362→      ur: 'آئرش ملازم سے نوکری کی پیشکش',
+  1363→      bn: 'আইরিশ নিয়োগকর্তার কাছ থেকে চাকরির প্রস্তাব',
+  1364→    },
+  1365→    summary: {
+  1366→      en: 'You must have a job offer from an Irish-registered employer for a role on the Critical Skills occupation list (or a qualifying role with salary ≥ €64,000/year).',
+  1367→      ur: 'آپ کے پاس آئرش رجسٹرڈ ملازم سے کنجلی ہنر کے پیشوں کی فہرست پر کردار (یا £64,000/سال تنخواہ کے ساتھ اہل کردار) کے لیے نوکری کی پیشکش ہونی چاہیے۔',
+  1368→      bn: 'আপনার কাছে আইরিশ-নিবন্ধিত নিয়োগকর্তার কাছ থেকে ক্রিটিক্যাল স্কিলস অকুপেশন তালিকার ভূমিকার জন্য (বা €64,000/বছর বেতনের সাথে যোগ্য ভূমিকা) চাকরির প্রস্তাব থাকতে হবে।',
+  1369→    },
+  1370→    source: 'https://enterprise.gov.ie/en/What-We-Do/Workplace-Skills/Employment-Permits/Employment-Permit-Types/Critical-Skills-Employment-Permit/',
+  1371→    applies: () => true,
+  1372→    evaluate: (a) => (a.hasCos ? 'pass' : 'fail'),
+  1373→  },
+  1374→  {
+  1375→    id: 'ie-sw-salary',
+  1376→    countryIso: 'IE',
+  1377→    category: 'skilled_worker',
+  1378→    status: 'PENDING_HUMAN_CLICK',
+  1379→    authority: { shortName: 'INIS', officialName: 'Irish Naturalisation and Immigration Service', url: 'https://www.irishimmigration.ie/' },
+  1380→    lastUpdated: today,
+  1381→    effectiveFrom: '2024-01-01T00:00:00Z',
+  1382→    validTo: null,
+  1383→    title: {
+  1384→      en: 'Minimum salary (€32,000 or €64,000)',
+  1385→      ur: 'کم سے کم تنخواہ (€32,000 یا €64,000)',
+  1386→      bn: 'ন্যূনতম বেতন (€32,000 বা €64,000)',
+  1387→    },
+  1388→    summary: {
+  1389→      en: 'For Critical Skills permits: minimum salary of €32,000/year (if on the occupation list) or €64,000/year (if not on the list but highly paid).',
+  1390→      ur: 'کنجلی ہنر پرمٹس کے لیے: €32,000/سال کی کم سے کم تنخواہ (اگر پریشوں کی فہرست پر ہے) یا €64,000/سال (اگر فہرست پر نہیں ہے لیکن زیادہ معاوضہ ہے)۔',
+  1391→      bn: 'ক্রিটিক্যাল স্কিলস পারমিটের জন্য: €32,000/বছর ন্যূনতম বেতন (পেশার তালিকায় থাকলে) বা €64,000/বছর (তালিকায় না থাকলে কিন্তু উচ্চ বেতন)।',
+  1392→    },
+  1393→    source: 'https://enterprise.gov.ie/en/What-We-Do/Workplace-Skills/Employment-Permits/',
+  1394→    applies: () => true,
+  1395→    evaluate: (a) => (a.salary >= 32000 ? 'pass' : 'fail'),
+  1396→  },
+  1397→
+  1398→  // =====================================================
+  1399→  // IRELAND — STUDENT (Stamp 2)
+  1400→  // =====================================================
+  1401→  {
+  1402→    id: 'ie-st-admission',
+  1403→    countryIso: 'IE',
+  1404→    category: 'student',
+  1405→    status: 'PENDING_HUMAN_CLICK',
+  1406→    authority: { shortName: 'INIS', officialName: 'Irish Naturalisation and Immigration Service', url: 'https://www.irishimmigration.ie/' },
+  1407→    lastUpdated: today,
+  1408→    effectiveFrom: '2024-01-01T00:00:00Z',
+  1409→    validTo: null,
+  1410→    title: {
+  1411→      en: 'Admission to a recognised Irish institution',
+  1412→      ur: 'ایک تسلیم شدہ آئرش ادارے میں داخلہ',
+  1413→      bn: 'একটি স্বীকৃত আইরিশ প্রতিষ্ঠানে ভর্তি',
+  1414→    },
+  1415→    summary: {
+  1416→      en: 'You must be enrolled in a full-time course at a recognised Irish institution on the Interim List of Eligible Programmes (ILEP).',
+  1417→      ur: 'آپ کو انٹریم لسٹ آف ایلیجible پروگرامز (ILEP) پر تسلیم شدہ آئرش ادارے میں فل ٹائم کورس میں داخلہ لینا ہوگا۔',
+  1418→      bn: 'আপনাকে ইন্টারিম লিস্ট অফ এলিজিবল প্রোগ্রামস (ILEP) এ স্বীকৃত আইরিশ প্রতিষ্ঠানে ফুল-টাইম কোর্সে ভর্তি হতে হবে।',
+  1419→    },
+  1420→    source: 'https://www.irishimmigration.ie/',
+  1421→    applies: () => true,
+  1422→    evaluate: (a) => (a.admissionOffer ? 'pass' : 'fail'),
+  1423→  },
+  1424→
+  1425→  // =====================================================
+  1426→  // IRELAND — VISITOR (Short Stay)
+  1427→  // =====================================================
+  1428→  {
+  1429→    id: 'ie-vs-visitor',
+  1430→    countryIso: 'IE',
+  1431→    category: 'visitor',
+  1432→    status: 'PENDING_HUMAN_CLICK',
+  1433→    authority: { shortName: 'INIS', officialName: 'Irish Naturalisation and Immigration Service', url: 'https://www.irishimmigration.ie/' },
+  1434→    lastUpdated: today,
+  1435→    effectiveFrom: '2024-01-01T00:00:00Z',
+  1436→    validTo: null,
+  1437→    title: {
+  1438→      en: 'Short stay visa (up to 90 days)',
+  1439→      ur: 'مختصر قیام ویزا (90 دن تک)',
+  1440→      bn: 'সংক্ষিপ্ত অবস্থান ভিসা (৯০ দিন পর্যন্ত)',
+  1441→    },
+  1442→    summary: {
+  1443→      en: 'A short stay visa allows visits up to 90 days for tourism, family visits, or business meetings. You must show sufficient funds and a return ticket.',
+  1444→      ur: 'مختصر قیام ویزا سیاحت، خاندانی دورے، یا کاروباری میٹنگز کے لیے 90 دن تک دورے کی اجازت دیتا ہے۔ آپ کو کافی فنڈز اور واپسی ٹکٹ دکھانا ہوگا۔',
+  1445→      bn: 'একটি সংক্ষিপ্ত অবস্থান ভিসা পর্যটন, পারিবারিক সফর, বা ব্যবসায়িক সাক্ষাৎকারের জন্য ৯০ দিন পর্যন্ত সফরের অনুমতি দেয়। আপনাকে পর্যাপ্ত তহবিল এবং ফেরার টিকিট দেখাতে হবে।',
+  1446→    },
+  1447→    source: 'https://www.irishimmigration.ie/',
+  1448→    applies: () => true,
+  1449→    evaluate: (a) => (a.visitPurposeValid && a.returnTicket ? 'pass' : 'fail'),
+  1450→  },
+  1451→];
+  1452→
+  1453→// Helpers — used by the engine to filter rules by country + category.
+  1454→export function rulesForCountryCategory(countryIso: string, category: RuleCategory): Rule[] {
+  1455→  const iso = countryIso.trim().toUpperCase();
+  1456→  return RULES.filter((r) => r.countryIso === iso && r.category === category);
+  1457→}
+  1458→
+  1459→export function rulesForCountry(countryIso: string): Rule[] {
+  1460→  const iso = countryIso.trim().toUpperCase();
+  1461→  return RULES.filter((r) => r.countryIso === iso);
+  1462→}
+  1463→
+  1464→export function rulesCount(countryIso?: string): number {
+  1465→  if (!countryIso) return RULES.length;
+  1466→  return rulesForCountry(countryIso).length;
+  1467→}
+  1468→
+  1469→// Date validity check — true if today falls within [effectiveFrom, validTo].
+  1470→export function isRuleActive(rule: Rule, now: Date = new Date()): boolean {
+  1471→  const from = new Date(rule.effectiveFrom).getTime();
+  1472→  const to = rule.validTo ? new Date(rule.validTo).getTime() : Infinity;
+  1473→  const n = now.getTime();
+  1474→  return n >= from && n <= to;
+  1475→}
+  1476→
