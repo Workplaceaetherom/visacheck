@@ -153,7 +153,7 @@ export const VISA_CATEGORIES: VisaCategory[] = [
     typicalDuration: '2-5 years (often route to citizenship)',
     requiresSponsorship: false,
     requiresFinancialProof: true,
-    popularFor: ['AE', 'US', 'AU', 'GB'],
+    popularFor: ['AE', 'US', 'AU', 'CA', 'SG', 'NZ', 'IE', 'DE'],
   },
 ];
 

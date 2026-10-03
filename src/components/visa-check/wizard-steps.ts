@@ -63,7 +63,7 @@ const CATEGORY_STEPS: Record<string, number[]> = {
   visitor:        [0, 1, 2, 10, 7, 8],
   family:         [0, 1, 2, 9, 7, 8],
   business:       [0, 1, 2, 3, 11, 7, 8],
-  investor:       [0, 1, 2, 11, 7, 8],
+  investor:       [0, 1, 2, 3, 11, 7, 8],  // job/salary step included — several investor routes reference income/salary evidence
 };
 
 /**

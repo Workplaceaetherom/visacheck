@@ -26,9 +26,12 @@ import type { RuleVerdict } from '@/lib/rules-engine';
 import { COUNTRIES } from '@/lib/countries';
 import { authorityDomain } from '@/lib/format';
 import { AnnouncementsFeed } from './announcements-feed';
+import { LiveIntelligencePanel } from './live-intelligence';
+import { PointsPanel } from './points-panel';
 import { SocialShareDialog } from './social-share';
 import { FeedbackWidget } from './feedback-widget';
 import { PathwaySuggestions } from './pathway-suggestions';
+import { GlobalFitRanking } from './global-fit-ranking';
 import { toast } from 'sonner';
 
 type Filter = 'all' | 'pending' | 'passed' | 'failed' | 'na';
@@ -359,6 +362,15 @@ export function Results() {
 
         {/* Alternative pathway suggestions — the "beast" feature */}
         <PathwaySuggestions />
+
+        {/* Indicative points score against published grids (CA/AU/GB/NZ/FR/KR) */}
+        <PointsPanel />
+
+        {/* Global fit ranking — when few routes pass here, show % fit for every country */}
+        <GlobalFitRanking />
+
+        {/* Live destination intelligence — real-time news + policy-mood gauge */}
+        <LiveIntelligencePanel />
 
         {/* Announcements feed — show pending changes for the same country */}
         <section className="mt-8">

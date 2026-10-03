@@ -22,12 +22,9 @@ const CURRENCY_SYMBOLS: Record<string, string> = {
 };
 
 const CURRENCY_NAMES: Record<string, string> = {
-  GBP: 'GBP',
-  USD: 'USD',
-  CAD: 'CAD',
-  AUD: 'AUD',
-  EUR: 'EUR',
-  AED: 'AED',
+  GBP: 'GBP', USD: 'USD', CAD: 'CAD', AUD: 'AUD', EUR: 'EUR', AED: 'AED',
+  SGD: 'SGD', NZD: 'NZD', SEK: 'SEK', JPY: 'JPY', KRW: 'KRW', HKD: 'HKD',
+  SAR: 'SAR', MYR: 'MYR', BRL: 'BRL',
 };
 
 /**

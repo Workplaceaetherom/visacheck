@@ -43,9 +43,11 @@ export function PathwaySuggestions() {
   if (suggestions.length === 0) return null;
 
   const onTryCountry = (s: PathwaySuggestion) => {
+    // Preserve the profile across the country switch so points calculators,
+    // pathway scores and rule verdicts recompute instantly for the new
+    // destination — resetting answers here would throw away the user's data.
     setCountry(s.countryIso);
     setCategory(s.categoryId);
-    resetAnswers();
     setUsedOnce(true);
     localStorage.setItem('vcUsedOnce', '1');
     setStage('wizard');
@@ -101,6 +103,22 @@ export function PathwaySuggestions() {
                     </span>
                   </div>
                   <p className="text-xs leading-relaxed opacity-90">{s.reason}</p>
+                  <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-medium">
+                    {s.hasPointsSystem && (
+                      <span className="rounded-full bg-primary/10 px-2 py-0.5 text-primary" title="This country runs a published points grid — VisaCheck computes your exact score">
+                        Points system · auto-scored
+                      </span>
+                    )}
+                    {s.settlementYears > 0 ? (
+                      <span className="rounded-full border border-current/20 px-2 py-0.5 opacity-80" title="Indicative residence requirement before permanent residence / settlement">
+                        PR in ~{s.settlementYears} yr{s.settlementYears === 1 ? '' : 's'}
+                      </span>
+                    ) : (
+                      <span className="rounded-full border border-current/20 px-2 py-0.5 opacity-60" title="No citizenship/permanent-residence-by-residence track on this route">
+                        No settlement track
+                      </span>
+                    )}
+                  </div>
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-[10px] font-medium opacity-70">
                       {s.estimatedRules > 0

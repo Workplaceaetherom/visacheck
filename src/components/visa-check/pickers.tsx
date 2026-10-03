@@ -163,10 +163,13 @@ export function CategoryPicker({
 
   if (!countryIso) return null;
 
-  // Use the static VISA_CATEGORIES list, filtered by which are available for this country
-  const all = VISA_CATEGORIES;
-  // We don't have country-specific availability filtering on the static category list — show all 6
-  const items = all;
+  // Filter the category list to only those with rule data loaded for the
+  // selected destination country (Country.categoryIds is kept in sync with
+  // rules-data.ts coverage). Falls back to the full list if no country chosen.
+  const country = countryIso ? COUNTRIES.find((c) => c.iso === countryIso) : null;
+  const items = country
+    ? VISA_CATEGORIES.filter((cat) => country.categoryIds.includes(cat.id))
+    : VISA_CATEGORIES;
 
   const pick = (id: string) => {
     setCategory(id);

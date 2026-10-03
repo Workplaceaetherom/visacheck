@@ -42,7 +42,9 @@ interface VisaState {
 }
 
 export const EMPTY_ANSWERS: Answers = {
-  age: 0,
+  // Sensible default working age so points calculators & pathway scores are
+  // meaningful out of the box; users overwrite it in the profile step.
+  age: 30,
   education: '',
   maritalStatus: '',
   employmentStatus: '',

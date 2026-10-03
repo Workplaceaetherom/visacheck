@@ -76,7 +76,7 @@ export const COUNTRIES: Country[] = [
     officialLanguage: 'English',
     timezone: 'Europe/London',
     available: true,
-    categoryIds: ['skilled_worker', 'student', 'visitor', 'family', 'business'],
+    categoryIds: ['skilled_worker', 'student', 'visitor', 'family', 'business', 'investor'],
     popularRoutes: ['India', 'Pakistan', 'Nigeria', 'Bangladesh'],
   },
   {
@@ -100,7 +100,7 @@ export const COUNTRIES: Country[] = [
     officialLanguage: 'English',
     timezone: 'America/New_York',
     available: true,
-    categoryIds: ['skilled_worker', 'student', 'visitor', 'family', 'business'],
+    categoryIds: ['skilled_worker', 'student', 'visitor', 'family', 'business', 'investor'],
     popularRoutes: ['India', 'China', 'Mexico', 'Philippines'],
   },
   {
@@ -124,7 +124,7 @@ export const COUNTRIES: Country[] = [
     officialLanguage: 'English/French',
     timezone: 'America/Toronto',
     available: true,
-    categoryIds: ['skilled_worker', 'student', 'visitor', 'family', 'business'],
+    categoryIds: ['skilled_worker', 'student', 'visitor', 'family', 'business', 'investor'],
     popularRoutes: ['India', 'Philippines', 'China', 'Nigeria'],
   },
   {
@@ -148,7 +148,7 @@ export const COUNTRIES: Country[] = [
     officialLanguage: 'English',
     timezone: 'Australia/Sydney',
     available: true,
-    categoryIds: ['skilled_worker', 'student', 'visitor', 'family', 'business'],
+    categoryIds: ['skilled_worker', 'student', 'visitor', 'family', 'business', 'investor'],
     popularRoutes: ['India', 'China', 'UK', 'Philippines'],
   },
   {
@@ -172,7 +172,7 @@ export const COUNTRIES: Country[] = [
     officialLanguage: 'German',
     timezone: 'Europe/Berlin',
     available: true,
-    categoryIds: ['skilled_worker', 'student', 'visitor', 'family', 'business'],
+    categoryIds: ['skilled_worker', 'student', 'visitor', 'family', 'business', 'investor'],
     popularRoutes: ['Turkey', 'Syria', 'India', 'Romania'],
   },
   {
@@ -196,7 +196,7 @@ export const COUNTRIES: Country[] = [
     officialLanguage: 'Arabic',
     timezone: 'Asia/Dubai',
     available: true,
-    categoryIds: ['skilled_worker', 'student', 'visitor', 'family', 'business'],
+    categoryIds: ['skilled_worker', 'student', 'visitor', 'family', 'business', 'investor'],
     popularRoutes: ['India', 'Pakistan', 'Egypt', 'Philippines'],
   },
   {
@@ -220,7 +220,7 @@ export const COUNTRIES: Country[] = [
     officialLanguage: 'English/Malay/Tamil',
     timezone: 'Asia/Singapore',
     available: true,
-    categoryIds: ['skilled_worker', 'student', 'visitor', 'family', 'business'],
+    categoryIds: ['skilled_worker', 'student', 'visitor', 'family', 'business', 'investor'],
     popularRoutes: ['India', 'China', 'Malaysia', 'Indonesia'],
   },
   {
@@ -244,7 +244,7 @@ export const COUNTRIES: Country[] = [
     officialLanguage: 'English/Maori',
     timezone: 'Pacific/Auckland',
     available: true,
-    categoryIds: ['skilled_worker', 'student', 'visitor', 'family', 'business'],
+    categoryIds: ['skilled_worker', 'student', 'visitor', 'family', 'business', 'investor'],
     popularRoutes: ['India', 'China', 'UK', 'Philippines'],
   },
   {
@@ -268,7 +268,7 @@ export const COUNTRIES: Country[] = [
     officialLanguage: 'English/Irish',
     timezone: 'Europe/Dublin',
     available: true,
-    categoryIds: ['skilled_worker', 'student', 'visitor', 'family', 'business'],
+    categoryIds: ['skilled_worker', 'student', 'visitor', 'family', 'business', 'investor'],
     popularRoutes: ['India', 'Brazil', 'Nigeria', 'Poland'],
   },
   {
@@ -292,7 +292,7 @@ export const COUNTRIES: Country[] = [
     officialLanguage: 'French',
     timezone: 'Europe/Paris',
     available: true,
-    categoryIds: ['skilled_worker', 'student', 'visitor', 'family', 'business'],
+    categoryIds: ['skilled_worker', 'student', 'visitor', 'family'],
     popularRoutes: ['Morocco', 'Algeria', 'Tunisia', 'Senegal'],
   },
   {
@@ -316,7 +316,7 @@ export const COUNTRIES: Country[] = [
     officialLanguage: 'Dutch',
     timezone: 'Europe/Amsterdam',
     available: true,
-    categoryIds: ['skilled_worker', 'student', 'visitor', 'family', 'business'],
+    categoryIds: ['skilled_worker', 'student', 'visitor', 'family'],
     popularRoutes: ['India', 'Turkey', 'Morocco', 'Poland'],
   },
   {
@@ -340,7 +340,7 @@ export const COUNTRIES: Country[] = [
     officialLanguage: 'Spanish',
     timezone: 'Europe/Madrid',
     available: true,
-    categoryIds: ['skilled_worker', 'student', 'visitor', 'family', 'business'],
+    categoryIds: ['skilled_worker', 'student', 'visitor', 'family'],
     popularRoutes: ['Morocco', 'Romania', 'UK', 'Colombia'],
   },
   {
@@ -364,7 +364,7 @@ export const COUNTRIES: Country[] = [
     officialLanguage: 'Portuguese',
     timezone: 'Europe/Lisbon',
     available: true,
-    categoryIds: ['skilled_worker', 'student', 'visitor', 'family', 'business'],
+    categoryIds: ['skilled_worker', 'student', 'visitor', 'family'],
     popularRoutes: ['Brazil', 'Angola', 'Cape Verde', 'UK'],
   },
   {
@@ -388,7 +388,7 @@ export const COUNTRIES: Country[] = [
     officialLanguage: 'Italian',
     timezone: 'Europe/Rome',
     available: true,
-    categoryIds: ['skilled_worker', 'student', 'visitor', 'family', 'business'],
+    categoryIds: ['skilled_worker', 'student', 'visitor', 'family'],
     popularRoutes: ['Romania', 'Morocco', 'Albania', 'Bangladesh'],
   },
   {
@@ -412,7 +412,7 @@ export const COUNTRIES: Country[] = [
     officialLanguage: 'Swedish',
     timezone: 'Europe/Stockholm',
     available: true,
-    categoryIds: ['skilled_worker', 'student', 'visitor', 'family', 'business'],
+    categoryIds: ['skilled_worker', 'student', 'family'],
     popularRoutes: ['Syria', 'Afghanistan', 'India', 'Iraq'],
   },
   {
@@ -436,7 +436,7 @@ export const COUNTRIES: Country[] = [
     officialLanguage: 'Japanese',
     timezone: 'Asia/Tokyo',
     available: true,
-    categoryIds: ['skilled_worker', 'student', 'visitor', 'family', 'business'],
+    categoryIds: ['skilled_worker', 'student', 'visitor'],
     popularRoutes: ['China', 'Vietnam', 'Philippines', 'Brazil'],
   },
   {
@@ -460,7 +460,7 @@ export const COUNTRIES: Country[] = [
     officialLanguage: 'Korean',
     timezone: 'Asia/Seoul',
     available: true,
-    categoryIds: ['skilled_worker', 'student', 'visitor', 'family', 'business'],
+    categoryIds: ['skilled_worker', 'student'],
     popularRoutes: ['China', 'Vietnam', 'Thailand', 'USA'],
   },
   {
@@ -484,7 +484,7 @@ export const COUNTRIES: Country[] = [
     officialLanguage: 'Chinese/English',
     timezone: 'Asia/Hong_Kong',
     available: true,
-    categoryIds: ['skilled_worker', 'student', 'visitor', 'family', 'business'],
+    categoryIds: ['skilled_worker', 'student', 'visitor'],
     popularRoutes: ['Philippines', 'Indonesia', 'India', 'UK'],
   },
   {
@@ -508,7 +508,7 @@ export const COUNTRIES: Country[] = [
     officialLanguage: 'Arabic',
     timezone: 'Asia/Riyadh',
     available: true,
-    categoryIds: ['skilled_worker', 'student', 'visitor', 'family', 'business'],
+    categoryIds: ['skilled_worker', 'student', 'visitor'],
     popularRoutes: ['Egypt', 'India', 'Pakistan', 'Philippines'],
   },
   {
@@ -532,7 +532,7 @@ export const COUNTRIES: Country[] = [
     officialLanguage: 'Malay',
     timezone: 'Asia/Kuala_Lumpur',
     available: true,
-    categoryIds: ['skilled_worker', 'student', 'visitor', 'family', 'business'],
+    categoryIds: ['skilled_worker', 'student', 'visitor'],
     popularRoutes: ['Indonesia', 'Bangladesh', 'Nepal', 'India'],
   },
   {
@@ -556,7 +556,7 @@ export const COUNTRIES: Country[] = [
     officialLanguage: 'Portuguese',
     timezone: 'America/Sao_Paulo',
     available: true,
-    categoryIds: ['skilled_worker', 'student', 'visitor', 'family', 'business'],
+    categoryIds: ['skilled_worker', 'student', 'visitor', 'family'],
     popularRoutes: ['Portugal', 'Haiti', 'Venezuela', 'Bolivia'],
   },
 ];

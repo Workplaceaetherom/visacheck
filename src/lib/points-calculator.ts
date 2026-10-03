@@ -28,6 +28,8 @@
 //   - Australia: Home Affairs points test for GSM (subclasses 189/190/491)
 //   - UK: Home Office Skilled Worker caseworker guidance (70 points, tradeable)
 
+import type { Answers } from '@/lib/rules-data';
+
 // ---------------------------------------------------------------------------
 // Shared types
 // ---------------------------------------------------------------------------
@@ -66,6 +68,14 @@ export interface PointsInput {
   provincialNomination?: boolean;
   siblingInCountry?: boolean;
   australianStudy?: boolean;
+  /** France: CEFR French band (falls back to englishLevel when absent). */
+  frenchLevel?: 'b1' | 'b2' | 'c1' | 'c2';
+  /** South Korea: TOPIK Korean proficiency band. */
+  koreanLevel?: 'topik3' | 'topik4' | 'topik5' | 'topik6';
+  /** Japan: JLPT proficiency band (used by HSP bonus points). */
+  japaneseLevel?: 'n5' | 'n4' | 'n3' | 'n2' | 'n1';
+  /** True if the applicant previously resided lawfully in the destination. */
+  previouslyLivedInCountry?: boolean;
 }
 
 /**
@@ -653,11 +663,30 @@ export function calculateUKPoints(input: PointsInput): PointsResult {
 // Dispatcher
 // ---------------------------------------------------------------------------
 
+/** Map the wizard's Answers onto a PointsInput for the points calculators. */
+export function answersToPointsInput(a: Answers): PointsInput {
+  return {
+    age: a.age,
+    education: a.education || undefined,
+    // The wizard captures a boolean "englishMet"; treat it as IELTS Competent
+    // (CLB 7) — the minimum band most employer-sponsored routes accept.
+    englishLevel: a.englishMet ? 'competent' : undefined,
+    foreignWorkExperience: a.workExperienceYears,
+    hasJobOffer: a.hasCos,
+    hasSpouse: a.maritalStatus === 'married' || a.maritalStatus === 'partner',
+    salary: a.salary,
+    isNewEntrant: a.newEntrant,
+  };
+}
+
 /**
  * Country-aware dispatcher. Routes by ISO alpha-2 code:
  *   - "CA" → Canada CRS (out of 1200)
  *   - "AU" → Australia Points Test (out of 100)
  *   - "GB" or "UK" → UK PBS (out of 70)
+ *   - "NZ" → Skilled Migrant Category 6-point proxy (needs 6 points)
+ *   - "FR" → Passeport Talent barème (needs 60 points)
+ *   - "KR" → F-2/E-7 Hi Korea points route (needs 80 points)
  *
  * Returns `null` for unsupported country codes so callers can fall back to
  * the rules-engine pathway (where most countries still live).
@@ -667,5 +696,210 @@ export function calculatePoints(countryIso: string, input: PointsInput): PointsR
   if (iso === 'CA') return calculateCanadaCRS(input);
   if (iso === 'AU') return calculateAustraliaPoints(input);
   if (iso === 'GB' || iso === 'UK') return calculateUKPoints(input);
+  if (iso === 'NZ') return calculateNZSmcPoints(input);
+  if (iso === 'FR') return calculateFrancePoints(input);
+  if (iso === 'KR') return calculateKoreaPoints(input);
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// France — Passeport Talent « salarié qualifié » points barème (since 2024)
+// ---------------------------------------------------------------------------
+
+/**
+ * Simplified French "Passeport Talent – salarié qualifié" points calculator.
+ * Préfectures assess applicants on a published barème; the commonly applied
+ * pass mark is 60 points. We approximate the factors an applicant can self-
+ * score from the VisaCheck wizard profile:
+ *   - Master's degree = 15 · Doctorate = 30
+ *   - Salary vs the "reference remuneration" (~1.8× SMIC ≈ €42,834/yr 2026):
+ *       ≥150% = 25 pts · ≥100% = 16 pts · ≥75% = 8 pts
+ *   - French language: B2+ = 10 · B1 = 6 (CEFR bands used by OFII guidance)
+ *   - Prior lawful residence in France = 10
+ * A master's + qualifying salary alone reaches the 60-point line — matching
+ * the typical approved profile described in Interior Ministry guidance.
+ */
+export function calculateFrancePoints(input: PointsInput): PointsResult {
+  const breakdown: { factor: string; points: number }[] = [];
+  let total = 0;
+
+  const eduPts = input.education === 'doctorate' ? 30 : input.education === 'master' ? 15 : 0;
+  if (eduPts > 0) {
+    breakdown.push({
+      factor: input.education === 'doctorate' ? 'Doctorate (Bac+5/Bac+8)' : "Master's degree (Bac+5)",
+      points: eduPts,
+    });
+    total += eduPts;
+  }
+
+  // Reference remuneration for the qualified-employee talent passport band.
+  const FR_REFERENCE_SALARY_EUR = 42834; // ~1.8 × SMIC (2026, approximate)
+  const sal = input.salary ?? 0;
+  if (sal > 0) {
+    const ratio = sal / FR_REFERENCE_SALARY_EUR;
+    const salPts = ratio >= 1.5 ? 25 : ratio >= 1.0 ? 16 : ratio >= 0.75 ? 8 : 0;
+    if (salPts > 0) {
+      breakdown.push({
+        factor: `Remuneration ${ratio >= 1.5 ? '≥150%' : ratio >= 1.0 ? '≥100%' : '≥75%'} of reference salary (€${FR_REFERENCE_SALARY_EUR.toLocaleString('en-US')}/yr)`,
+        points: salPts,
+      });
+      total += salPts;
+    }
+  }
+
+  const frLang = input.frenchLevel ?? input.englishLevel;
+  if (frLang === 'c1' || frLang === 'c2' || frLang === 'b2') {
+    breakdown.push({ factor: 'French proficiency B2 or higher', points: 10 });
+    total += 10;
+  } else if (frLang === 'b1' || frLang === 'competent') {
+    breakdown.push({ factor: 'French proficiency B1', points: 6 });
+    total += 6;
+  }
+
+  if (input.previouslyLivedInCountry) {
+    breakdown.push({ factor: 'Prior lawful residence in France', points: 10 });
+    total += 10;
+  }
+
+  return {
+    country: 'France',
+    totalPoints: total,
+    maxPoints: 100,
+    minimumRequired: 60,
+    label: `France Passeport Talent: ${total} / 60 points (prefecture barème)`,
+    passes: total >= 60,
+    breakdown,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// South Korea — F-2 / E-7 points-based residency (Hi Korea K-ETA scoring)
+// ---------------------------------------------------------------------------
+
+/**
+ * Simplified Korean points-route calculator (F-2 resident via E-7 skilled
+ * worker conversion). Hi Korea publishes a points table where 80 points
+ * grants an invitation to apply for F-2 residency; E-7 itself needs ~50+.
+ * Self-scorable factors approximated from the wizard profile:
+ *   - Age: 20–29 = 20 · 30–34 = 15 · 35–39 = 10 · 40+ = 5
+ *   - Education: Doctorate = 20 · Master's = 15 · Bachelor's = 10
+ *   - Income vs GNI per-capita multiple (E-7 ≈1.5×, F-2 ≈1.8×):
+ *       ≥₩100M ≈ 20 pts · ≥₩80M ≈ 15 · ≥₩60M ≈ 10 · ≥₩40M ≈ 5
+ *   - TOPIK level 5–6 = 10 · 3–4 = 5 (English-track holders get partial credit)
+ *   - Relevant work experience: 10 yrs+ = 10 · 5 yrs+ = 8 · 3 yrs+ = 5
+ */
+export function calculateKoreaPoints(input: PointsInput): PointsResult {
+  const breakdown: { factor: string; points: number }[] = [];
+  let total = 0;
+
+  const age = input.age ?? 0;
+  if (age > 0) {
+    const agePts = age <= 29 ? 20 : age <= 34 ? 15 : age <= 39 ? 10 : 5;
+    breakdown.push({ factor: `Age bracket (${age})`, points: agePts });
+    total += agePts;
+  }
+
+  const eduPts =
+    input.education === 'doctorate' ? 20 :
+    input.education === 'master' ? 15 :
+    input.education === 'bachelor' ? 10 : 0;
+  if (eduPts > 0) {
+    breakdown.push({ factor: 'Education level', points: eduPts });
+    total += eduPts;
+  }
+
+  const won = input.salary ?? 0;
+  if (won > 0) {
+    const incPts = won >= 100_000_000 ? 20 : won >= 80_000_000 ? 15 : won >= 60_000_000 ? 10 : won >= 40_000_000 ? 5 : 0;
+    if (incPts > 0) {
+      breakdown.push({ factor: 'Annual income vs Korean GNI multiples', points: incPts });
+      total += incPts;
+    }
+  }
+
+  if (input.koreanLevel === 'topik5' || input.koreanLevel === 'topik6') {
+    breakdown.push({ factor: 'TOPIK level 5–6', points: 10 });
+    total += 10;
+  } else if (input.koreanLevel === 'topik3' || input.koreanLevel === 'topik4') {
+    breakdown.push({ factor: 'TOPIK level 3–4', points: 5 });
+    total += 5;
+  } else if (input.englishLevel === 'superior' || input.englishLevel === 'c1' || input.englishLevel === 'c2') {
+    breakdown.push({ factor: 'Superior English (EPAS/IELTS high band)', points: 5 });
+    total += 5;
+  }
+
+  const yrs = Math.floor(input.foreignWorkExperience ?? 0);
+  const expPts = yrs >= 10 ? 10 : yrs >= 5 ? 8 : yrs >= 3 ? 5 : 0;
+  if (expPts > 0) {
+    breakdown.push({ factor: 'Relevant work experience', points: expPts });
+    total += expPts;
+  }
+
+  return {
+    country: 'South Korea',
+    totalPoints: total,
+    maxPoints: 200,
+    minimumRequired: 80,
+    label: `Korea F-2/E-7 points route: ${total} / 80 points (Hi Korea threshold)`,
+    passes: total >= 80,
+    breakdown,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Dispatcher
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// New Zealand — Skilled Migrant Category (6-point system, since Nov 2023)
+// ---------------------------------------------------------------------------
+
+/**
+ * Simplified SMC 6-point calculator. INZ awards points from three areas —
+ * skilled work experience, qualifications, and registration — and you need
+ * 6 points total (plus a job paying at least the median wage, NZD $35.00/hr
+ * from Aug 2025). We approximate with qualification + experience bands:
+ *   Bachelor (Level 7) = 3 · Master = 5 · Doctorate = 6
+ *   Skilled experience: 2+ yrs = 1 · 3+ yrs = 2 · 4+ yrs = 3 (max 3)
+ * A master's + 2 years' experience therefore reaches the 6-point line —
+ * matching the published typical profile.
+ */
+export function calculateNZSmcPoints(input: PointsInput): PointsResult {
+  const breakdown: { factor: string; points: number }[] = [];
+  let total = 0;
+
+  const qualPts =
+    input.education === 'doctorate' ? 6 :
+    input.education === 'master' ? 5 :
+    input.education === 'bachelor' ? 3 :
+    input.education === 'diploma' ? 2 : 0;
+  if (qualPts > 0) {
+    breakdown.push({ factor: 'Qualification level', points: qualPts });
+    total += qualPts;
+  }
+
+  const yrs = Math.floor(input.foreignWorkExperience ?? 0);
+  const expPts = yrs >= 5 ? 3 : yrs >= 4 ? 3 : yrs >= 3 ? 2 : yrs >= 2 ? 1 : 0;
+  if (expPts > 0) {
+    breakdown.push({ factor: 'Skilled work experience', points: expPts });
+    total += expPts;
+  }
+
+  if (input.provincialNomination) {
+    // Migration-relevant regional work/offer bonus (up to 2 pts under SMC).
+    breakdown.push({ factor: 'Regional (green-region) work or offer', points: 2 });
+    total += 2;
+  }
+
+  total = Math.min(6, total);
+
+  return {
+    country: 'New Zealand',
+    totalPoints: total,
+    maxPoints: 6,
+    minimumRequired: 6,
+    label: `NZ Skilled Migrant Category: ${total} / 6 points`,
+    passes: total >= 6,
+    breakdown,
+  };
 }

@@ -22,6 +22,7 @@ import { COUNTRIES } from '@/lib/countries';
 import { VISA_CATEGORIES } from '@/lib/visa-categories';
 import { CountryPicker, CategoryPicker } from './pickers';
 import { AnnouncementsFeed } from './announcements-feed';
+import { LiveIntelligencePanel } from './live-intelligence';
 import { StatCounter } from './stat-counter';
 import { FAQSection } from './faq-section';
 import { QUICK_CHECK_PROFILES, type QuickCheckProfile } from '@/lib/quick-check';
@@ -322,6 +323,7 @@ export function Home({ onOpenGlobalAnnouncements, onOpenComparison }: { onOpenGl
           </div>
         )}
         <AnnouncementsFeed limit={3} />
+        <LiveIntelligencePanel />
       </section>
 
       {/* How it works */}
