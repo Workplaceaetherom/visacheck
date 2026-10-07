@@ -168,14 +168,19 @@ function toUsd(amount: number, currency: string): number {
  */
 const NATIONALITY_CURRENCY: Record<string, string> = {
   Pakistan: 'PKR', India: 'INR', Bangladesh: 'BDT', Nepal: 'NPR',
-  Sri Lanka: 'LKR', Afghanistan: 'AFN', Philippines: 'PHP', Indonesia: 'IDR',
+  'Sri Lanka': 'LKR', Afghanistan: 'AFN', Philippines: 'PHP', Indonesia: 'IDR',
   Vietnam: 'VND', Thailand: 'THB', Turkey: 'TRY', Egypt: 'EGP', Nigeria: 'NGN',
-  Ghana: 'GHS', Kenya: 'KES', South Africa: 'ZAR', Morocco: 'MAD',
+  Ghana: 'GHS', Kenya: 'KES', 'South Africa': 'ZAR', Morocco: 'MAD',
   Tunisia: 'TND', Algeria: 'DZD', Iraq: 'IQD', Iran: 'IRR', Jordan: 'JOD',
   Lebanon: 'LBP', Syria: 'SYP', Yemen: 'YER', Ukraine: 'UAH', Poland: 'PLN',
   Romania: 'RON', Mexico: 'MXN', Colombia: 'COP', Peru: 'PEN', Chile: 'CLP',
   Argentina: 'ARS', China: 'CNY',
 };
+
+/** Normalise a nationality string for lookup (trim + collapse whitespace). */
+function normaliseNationality(n: string): string {
+  return n.trim().replace(/\s+/g, ' ');
+}
 
 /** Rate-table alias lookup for currencies keyed by ISO code above. */
 const EXTRA_RATES: Record<string, number> = {
@@ -197,7 +202,7 @@ function resolveAmountUsd(
   const naive = toUsd(amount, destCurrency);
   if (thresholdUsd <= 0 || amount <= 0) return naive;
   if (naive >= thresholdUsd * 0.25) return naive; // plausible as-is
-  const home = NATIONALITY_CURRENCY[nationality];
+  const home = NATIONALITY_CURRENCY[normaliseNationality(nationality)];
   if (!home || home === destCurrency) return naive;
   const converted = toUsd(amount, home);
   // Accept the reinterpretation only when it produces a sensible band.

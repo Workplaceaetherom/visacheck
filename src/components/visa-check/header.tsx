@@ -22,7 +22,7 @@ export function Header({ onHomeClick }: { onHomeClick?: () => void }) {
   const [mounted, setMounted] = useState(false);
   // next-themes renders different markup on server vs client; mounted guard avoids
   // hydration mismatch. The single setState on mount is the documented pattern.
-  // eslint-disable-next-line react-hooks/set-state-in-effect
+   
   useEffect(() => setMounted(true), []);
 
   // Sync <html lang> + <html dir> for screen readers + RTL.
