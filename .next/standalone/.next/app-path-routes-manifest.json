@@ -1,0 +1,10 @@
+{
+  "/_global-error/page": "/_global-error",
+  "/_not-found/page": "/_not-found",
+  "/api/announcements/route": "/api/announcements",
+  "/api/check/route": "/api/check",
+  "/api/compare/route": "/api/compare",
+  "/api/countries/route": "/api/countries",
+  "/api/live/route": "/api/live",
+  "/page": "/"
+}
